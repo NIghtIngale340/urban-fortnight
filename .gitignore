@@ -19,10 +19,13 @@ models/*.pkl
 data/raw/*.csv
 data/raw/*.gz
 archive/kddcup.data/
-data/processed/*.npy
 
 # OS and Editor Files
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
+
+# Local Prompts and Scratch
+docs/context_prompt.md
+

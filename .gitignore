@@ -1,0 +1,28 @@
+# Python & Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints/
+
+# Model Weights and Large Joblib Artifacts
+models/*.joblib
+models/*.pkl
+
+# Large Raw and Processed Datasets (>50MB)
+data/raw/*.csv
+data/raw/*.gz
+archive/kddcup.data/
+data/processed/*.npy
+
+# OS and Editor Files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

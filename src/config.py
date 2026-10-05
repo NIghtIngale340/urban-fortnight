@@ -40,6 +40,38 @@ CATEGORICAL_COLS = ["protocol_type", "service", "flag"]
 CONSTANT_COLS = ["num_outbound_cmds", "is_host_login"]
 FAMILIES = ["Normal", "DoS", "Probe", "R2L", "U2R"]
 
+# Confirmed in Phase 6 on train: features with nunique() == 2
+BINARY_COLS = ["is_guest_login", "land", "logged_in", "root_shell"]
+
+# Derived numeric columns (excluding constant, categorical, and binary)
+NUMERIC_COLS = [c for c in FEATURE_NAMES if c not in CATEGORICAL_COLS + CONSTANT_COLS + BINARY_COLS]
+
+# Heavy-tailed columns on train: numeric columns with skewness > 5.0
+HEAVY_TAILED_COLS = [
+    "diff_srv_rate", "dst_bytes", "dst_host_srv_diff_host_rate", "duration",
+    "hot", "num_access_files", "num_compromised", "num_failed_logins",
+    "num_file_creations", "num_root", "num_shells", "src_bytes",
+    "srv_count", "su_attempted", "urgent", "wrong_fragment"
+]
+
+# Strongly correlated feature pairs (|r| > 0.95) on train
+CORRELATED_PAIRS = [
+    ("srv_serror_rate", "dst_host_srv_serror_rate", 0.9983),
+    ("serror_rate", "dst_host_serror_rate", 0.9967),
+    ("serror_rate", "srv_serror_rate", 0.9963),
+    ("dst_host_serror_rate", "dst_host_srv_serror_rate", 0.9959),
+    ("num_compromised", "num_root", 0.9955),
+    ("srv_serror_rate", "dst_host_serror_rate", 0.9951),
+    ("serror_rate", "dst_host_srv_serror_rate", 0.9950),
+    ("rerror_rate", "srv_rerror_rate", 0.9913),
+    ("rerror_rate", "dst_host_rerror_rate", 0.9755),
+    ("srv_rerror_rate", "dst_host_srv_rerror_rate", 0.9753),
+    ("rerror_rate", "dst_host_srv_rerror_rate", 0.9727),
+    ("dst_host_rerror_rate", "dst_host_srv_rerror_rate", 0.9714),
+    ("srv_rerror_rate", "dst_host_rerror_rate", 0.9673),
+]
+
+
 
 ATTACK_TO_FAMILY: dict[str, str] = {
     "back": "DoS",

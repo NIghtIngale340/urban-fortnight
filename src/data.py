@@ -172,11 +172,21 @@ def load_train() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     )
 
 
+def load_train() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
+    """Return (X_train, y_train, meta_train). Use this everywhere until final evaluation."""
+    raw = load_raw()
+    cleaned, _ = clean(raw)
+    X, y, meta = split_xy(cleaned)
+    train_idx, _, _ = load_split(n_rows=len(X))
+    return (
+        X.iloc[train_idx].reset_index(drop=True),
+        y.iloc[train_idx].reset_index(drop=True),
+        meta.iloc[train_idx].reset_index(drop=True),
+    )
+
+
 def load_test() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
-    """Load the locked test partition: (X_test, y_test, meta_test).
-    
-    Touched ONLY once in Phase 13 for final evaluation.
-    """
+    """Return (X_test, y_test, meta_test). LOCKED — final evaluation only."""
     raw = load_raw()
     cleaned, _ = clean(raw)
     X, y, meta = split_xy(cleaned)

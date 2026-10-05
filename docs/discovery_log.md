@@ -74,10 +74,28 @@ This log records our actual development journey, empirical observations, failure
 
 ---
 
-### Entry 5: Upcoming Phases 6–10 Roadmap Decisions
+### Entry 5: Train-Only Exploratory Data Analysis & Feature Typology (Phase 6)
 - **Date:** October 5, 2026
-- **Architecture Freeze:**
-  - Phase 6 EDA will be conducted exclusively on `load_train()` to prevent data snooping.
-  - Phase 7 will build `FeatureEngineer` and `ColumnTransformer` inside scikit-learn `Pipeline` objects to prevent CV fold leakage.
-  - Phase 8 will construct the evaluation harness (Macro-F1, binary FPR/FNR) and benchmark the Dummy baseline (M0).
-  - Phases 9 & 10 will train and evaluate Logistic Regression (M1) and Decision Tree (M2) on identical 5-fold CV splits.
+- **Question Raised:** What do the distributions, correlations, and feature characteristics look like on the training partition (`X_train`), and how do they inform preprocessing without data snooping?
+- **Key Empirical Discoveries on Train (116,466 rows):**
+  1. **Protocol Specificity:** R2L and U2R attacks are strictly confined to the **TCP** protocol (100% of R2L and 98% of U2R are TCP). ICMP connections are split between Normal, DoS (`smurf`), and Probe.
+  2. **Severe Skewness:** `src_bytes` spans from 0 to 693,375,640 (median: 147.0) with an extreme skewness of **339.89**. `urgent` (217.35), `num_compromised` (215.10), and `dst_bytes` (84.04) also exhibit heavy tails. This justifies applying `np.log1p` before scaling for linear models (Logistic Regression).
+  3. **High Multicollinearity (13 Pairs with $|r| > 0.95$):**
+     - Perfect redundancies in SYN error rates: `srv_serror_rate` $\leftrightarrow$ `dst_host_srv_serror_rate` ($r = 0.9983$), `serror_rate` $\leftrightarrow$ `dst_host_serror_rate` ($r = 0.9967$).
+     - Host compromise twins: `num_compromised` $\leftrightarrow$ `num_root` ($r = 0.9955$).
+     - REJ error rates: `rerror_rate` $\leftrightarrow$ `srv_rerror_rate` ($r = 0.9913$).
+     - *Decision:* Keep all correlated features for tree models (trees split on thresholds internally), but use permutation importance rather than MDI to avoid splitting credit.
+  4. **Zero-Inflation & Host Content Discriminators:**
+     - Content features (`urgent`, `su_attempted`, `num_shells`, `root_shell`, `num_failed_logins`) are >99.9% zeros across the general population.
+     - However, non-zero values are almost exclusively concentrated in **R2L and U2R** (e.g. `hot` is non-zero in 43.1% of R2L and 57.1% of U2R; `root_shell` is non-zero in 11.9% of U2R).
+  5. **Feature-to-Family Discriminative Separation:**
+     - **DoS and Probe** are distinguished by *traffic-window features* (`count`, `srv_count`, `serror_rate`).
+     - **R2L and U2R** are distinguished by *host content features* (`hot`, `num_root`, `num_file_creations`, `num_failed_logins`).
+  6. **Feature Column Partitions Added to `src/config.py`:**
+     - `CONSTANT_COLS = ["num_outbound_cmds", "is_host_login"]` (2 cols)
+     - `CATEGORICAL_COLS = ["protocol_type", "service", "flag"]` (3 cols)
+     - `BINARY_COLS = ["is_guest_login", "land", "logged_in", "root_shell"]` (4 cols)
+     - `NUMERIC_COLS` = 32 remaining continuous/count features.
+     - `HEAVY_TAILED_COLS` = 16 numeric features with skewness $> 5.0$.
+     - Proved full coverage: `CONSTANT + CATEGORICAL + BINARY + NUMERIC == 41 features`.
+

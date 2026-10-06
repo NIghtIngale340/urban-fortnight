@@ -156,20 +156,6 @@ def load_split(out_dir: Path = PROCESSED_DIR, n_rows: int = None) -> tuple[np.nd
     return train_idx, test_idx, meta
 
 
-def load_train() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
-    """Load the cleaned training partition: (X_train, y_train, meta_train).
-    
-    Guarantees that Phase 6–12 work only touches the training partition.
-    """
-    raw = load_raw()
-    cleaned, _ = clean(raw)
-    X, y, meta = split_xy(cleaned)
-    train_idx, _, _ = load_split(n_rows=len(X))
-    return (
-        X.iloc[train_idx].reset_index(drop=True),
-        y.iloc[train_idx].reset_index(drop=True),
-        meta.iloc[train_idx].reset_index(drop=True),
-    )
 
 
 def load_train() -> tuple[pd.DataFrame, pd.Series, pd.Series]:

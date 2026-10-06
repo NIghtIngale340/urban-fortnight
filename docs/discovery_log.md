@@ -99,3 +99,26 @@ This log records our actual development journey, empirical observations, failure
      - `HEAVY_TAILED_COLS` = 16 numeric features with skewness $> 5.0$.
      - Proved full coverage: `CONSTANT + CATEGORICAL + BINARY + NUMERIC == 41 features`.
 
+---
+
+### Entry 6: Leakage-Free Preprocessing & Row-Wise Feature Engineering (Phase 7)
+- **Date:** October 6, 2026
+- **Question Raised:** How do we package feature engineering, categorical encoding, and numeric scaling so they re-fit strictly inside each CV fold without information leakage?
+- **Implementation & Architecture:**
+  1. **Row-Wise Feature Engineering (`src/features.py`):**
+     - `bytes_ratio`: $\log(1 + \text{src\_bytes}) - \log(1 + \text{dst\_bytes})$ (directional flow ratio without zero-division risk).
+     - `zero_payload`: Binary indicator for $(\text{src\_bytes} = 0 \land \text{dst\_bytes} = 0)$ capturing scanning/flood probes.
+     - `content_activity`: Host-level suspicious indicator count summing payload anomalies (`hot`, `num_failed_logins`, `num_compromised`, `num_root`, etc.).
+     - `privilege_flag`: Binary indicator for privilege escalation indicators ($\text{root\_shell} > 0 \lor \text{su\_attempted} > 0 \lor \text{num\_root} > 0$).
+  2. **Pipeline Preprocessor (`src/preprocessing.py`):**
+     - Categorical features (`protocol_type`, `service`, `flag`) $\rightarrow$ `OneHotEncoder(handle_unknown='ignore', sparse_output=False)` producing 80 encoded columns on train.
+     - Binary features (`BINARY_COLS` + engineered binary flags) $\rightarrow$ passthrough.
+     - When `scale=False` (tree models): all remaining numerical features pass through untouched (115 total columns without engineering, 119 with engineering).
+     - When `scale=True` (linear models): heavy-tailed features get `log1p` + `StandardScaler`; remaining numerics get `StandardScaler`. Added `feature_names_out="one-to-one"` to ensure seamless pipeline introspection.
+  3. **Verification & Assertions Passed:**
+     - **Row-Independence:** Transforming a single row in isolation yields identical numerical values to transforming that row within a batch (proving zero cross-row statistical leakage).
+     - **Unseen Categories:** Input records with previously unseen services transform without errors.
+     - **Immutability:** `add_features()` returns a copy and does not mutate input DataFrames.
+     - **Pipeline Integration:** `build_pipeline(DummyClassifier())` fits and predicts smoothly across all four combinations of `scale` $\in \{\text{True}, \text{False}\}$ and `engineered` $\in \{\text{True}, \text{False}\}$.
+
+

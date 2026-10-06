@@ -10,6 +10,8 @@ PROCESSED_DIR = DATA_DIR / "processed"
 RAW_PATH = RAW_DIR / "kddcup.csv"
 NAMES_PATH = RAW_DIR / "kddcup.names.txt"
 ATTACK_TYPES_PATH = RAW_DIR / "training_attack_types.txt"
+METRICS_DIR = PROJECT_ROOT / "reports" / "metrics"
+FIGURES_DIR = PROJECT_ROOT / "reports" / "figures"
 
 
 

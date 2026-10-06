@@ -121,4 +121,41 @@ This log records our actual development journey, empirical observations, failure
      - **Immutability:** `add_features()` returns a copy and does not mutate input DataFrames.
      - **Pipeline Integration:** `build_pipeline(DummyClassifier())` fits and predicts smoothly across all four combinations of `scale` $\in \{\text{True}, \text{False}\}$ and `engineered` $\in \{\text{True}, \text{False}\}$.
 
+---
+
+### Entry 7: Evaluation Harness Architecture & The Dummy Sanity Floor (Phase 8)
+- **Date:** October 6, 2026
+- **Question Raised:** How do we construct an unshakeable, leak-proof cross-validation harness that accurately measures multiclass performance, tracks real-world operational security constraints (FPR $\le 0.5\%$), benchmarks inference latency, and establishes an empirical performance floor?
+- **Implementation & Architectural Decisions:**
+  1. **Strict Train-Only 5-Fold Stratified Cross-Validation (`src/evaluation.py`):**
+     - Configured `get_cv(n_splits=5, seed=42)` using `StratifiedKFold(shuffle=True)`.
+     - Verified fold disjointness ($V_i \cap T_i = \emptyset$), strict index partition completeness ($\sum |V_i| = 116,466$), and deterministic reproducibility across runs.
+  2. **Multi-Perspective Metrics Engine (`multiclass_metrics` & `binary_view`):**
+     - **Multiclass View:** Computes overall Accuracy, Macro-F1 (primary metric), Weighted-F1, Balanced Accuracy, and per-class Precision, Recall, and F1 across all 5 families (`Normal`, `DoS`, `Probe`, `R2L`, `U2R`) with `zero_division=0`.
+     - **Operational Binary View:** Projects predictions to binary intrusion detection:
+       $$\text{FPR} = \frac{\text{Normal classified as Attack}}{\text{Total Actual Normal}}$$
+       $$\text{FNR} = \frac{\text{Attacks classified as Normal}}{\text{Total Actual Attacks}}$$
+       This directly ties into our core operational IDS requirement: an enterprise intrusion detection system must maintain $\text{FPR} \le 0.5\%$ to prevent alert fatigue from overwhelming security operations centers (SOC).
+  3. **Timing & Out-of-Fold (OOF) Tracking (`evaluate_cv`):**
+     - Manual CV loop with `sklearn.base.clone(pipeline)` to ensure zero state carryover between folds.
+     - Times training (`fit_time`) and latency (`predict_time_per_1k` in ms per 1,000 queries) per fold.
+     - Accumulates exact Out-of-Fold predictions ($N = 116,466$) for downstream threshold calibration and error analysis.
+  4. **The Dummy Classifier Floor (M0):**
+     - Built `M0_dummy` using `DummyClassifier(strategy='most_frequent')` wrapped in `build_pipeline(scale=False, engineered=False)`.
+     - Predicts strictly the majority class (`Normal`) for all samples.
+- **Empirical Baseline Results (5-Fold CV on 116,466 training samples):**
+  - **Accuracy:** $0.6033$ (exactly equals the prevalence of `Normal` in train: $70,264 / 116,466$).
+  - **Macro-F1:** $0.1505$ (Normal F1 is $0.7526$; all 4 attack families have F1 of $0.0000$; macro average $= 0.7526 / 5$).
+  - **Weighted-F1:** $0.4540$.
+  - **Balanced Accuracy:** $0.2000$ (recall is $1.0000$ for Normal and $0.0000$ for all 4 attacks; mean recall $= 1/5$).
+  - **Binary FPR:** $0.0000$ (0 false alarms because it never flags any connection as an attack).
+  - **Binary FNR:** $1.0000$ (misses 100% of all intrusions: 0/43,657 DoS, 0/1,704 Probe, 0/799 R2L, 0/42 U2R).
+  - **Inference Latency:** $\approx 0.0011$ ms per 1,000 connections.
+- **Key Takeaways & Significance for Report & Video:**
+  - **The "0% False Alarm" Fallacy:** M0 achieves the theoretical ideal of zero false alarms ($\text{FPR} = 0\%$), yet it is completely useless as an IDS because it allows 100% of attacks to penetrate undetected ($\text{FNR} = 100\%$).
+  - **Accuracy as a Deceptive Metric:** M0 appears to have $>60\%$ accuracy despite having zero detection capability, reinforcing why Macro-F1, per-class recall, and paired FPR/FNR are mandatory.
+  - Any valid machine learning candidate (M1–M4) must substantially beat Macro-F1 $> 0.1505$ and FNR $\ll 1.0000$ while maintaining $\text{FPR} \le 0.0050$.
+- **Artifacts Generated:** Saved fold metrics to `reports/metrics/cv_results_M0_dummy.csv`.
+
+
 

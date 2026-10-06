@@ -157,5 +157,42 @@ This log records our actual development journey, empirical observations, failure
   - Any valid machine learning candidate (M1–M4) must substantially beat Macro-F1 $> 0.1505$ and FNR $\ll 1.0000$ while maintaining $\text{FPR} \le 0.0050$.
 - **Artifacts Generated:** Saved fold metrics to `reports/metrics/cv_results_M0_dummy.csv`.
 
+---
+
+### Entry 8: Logistic Regression Linear Baseline & The Linear Alert Fatigue Barrier (Phase 9)
+- **Date:** October 7, 2026
+- **Question Raised:** How effectively can a linear model separate network attack classes from normal traffic under balanced class weighting, and does a linear decision boundary satisfy the enterprise false alarm constraint ($\text{FPR} \le 0.5\%$)?
+- **Model Architecture & Preprocessing (`M1_logreg`):**
+  - **Estimator:** Multinomial `LogisticRegression(solver='lbfgs', max_iter=3000, class_weight='balanced', random_state=42)`.
+  - **Preprocessing:** Pipeline with `scale=True` (StandardScaler on all numeric features, log1p + StandardScaler on heavy-tailed columns) and `OneHotEncoder(handle_unknown='ignore')` yielding 115 input features.
+  - **Class Weighting:** Inversely proportional to class frequencies ($w_c = N / (K \cdot N_c)$): Normal ($0.33$), DoS ($0.53$), Probe ($13.67$), R2L ($29.15$), U2R ($554.60$).
+- **Key Empirical Discoveries & Results (5-Fold CV on 116,466 training samples):**
+  1. **Convergence Sensitivity & Necessity of Scaling:**
+     - Fitting without feature scaling (`scale=False`) triggers `ConvergenceWarning: lbfgs failed to converge` even after hundreds of iterations, driven by extreme feature variance (e.g., `src_bytes` with skewness $>300$ and values up to $6.9 \times 10^8$).
+     - With `scale=True`, L-BFGS converges smoothly across all 5 folds with zero convergence warnings.
+  2. **Performance Summary:**
+     - **Accuracy:** $0.9882 \pm 0.0009$ ($98.82\%$).
+     - **Macro-F1:** $0.7702 \pm 0.0043$ (Range: $0.7666$ to $0.7767$). A massive leap over M0 Dummy ($0.1505$).
+     - **Binary FPR:** **$0.0181 \pm 0.0015$ ($1.81\%$)**. **Violates the operational limit ($\le 0.50\%$) by 3.6x!**
+     - **Binary FNR:** $0.0013 \pm 0.0002$ ($0.13\%$; captures $>99.8\%$ of attacks).
+     - **Per-Class Breakdown:**
+       - `Normal`: Recall $98.19\%$, F1 $0.9904$
+       - `DoS`: Recall $99.86\%$, F1 $0.9988$
+       - `Probe`: Recall $98.88\%$, F1 $0.9099$
+       - `R2L`: Recall $98.00\%$, F1 $0.6557$ (Precision: $49.31\%$)
+       - `U2R`: Recall $78.89\%$, F1 $0.2962$ (Precision: $18.36\%$)
+     - **Fit Latency:** $\approx 50.4$s per fold; inference latency $\approx 0.0019$ ms per 1,000 packets.
+  3. **The Core Theoretical Finding for Section III & IV of the Final Report:**
+     - **The Linear Decision Boundary Barrier:** Under balanced class weights, logistic regression bends its hyperplane to capture rare attacks (achieving high recall: $98.0\%$ R2L, $78.9\%$ U2R). However, because linear hyperplanes cannot model non-linear boundaries between packet attributes (e.g. valid web requests vs. stealthy HTTP probes), it over-flags benign traffic as intrusive.
+     - **Operational Impact:** An FPR of $1.81\%$ means that out of 1,000,000 normal transactions per day, **~18,100 false alarms** are generated daily, overwhelming SOC analysts and causing alert fatigue.
+     - This provides clear empirical justification for transitioning to non-linear tree-based architectures (Decision Tree M2, Random Forest M3, LightGBM M4).
+  4. **Interpretability & Top Coefficient Drivers:**
+     - `DoS`: Driven by `flag_S0` (+4.76), `service_ecr_i` (+4.61), `protocol_type_icmp` (+4.26) — classic ICMP floods and half-open SYN connections.
+     - `Normal`: Driven by `service_http` (+4.08), `is_guest_login` (+3.90).
+     - `R2L`: Driven by `service_imap4` (+6.64), `protocol_type_tcp` (+3.92).
+     - `U2R`: Driven by `service_telnet` (+9.41), `logged_in` (+4.34) — interactive terminal sessions leading to unauthorized root transitions.
+- **Artifacts Generated:** Saved fold metrics to `reports/metrics/cv_results_M1_logreg.csv`.
+
+
 
 

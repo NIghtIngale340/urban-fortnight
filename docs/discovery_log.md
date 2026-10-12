@@ -295,3 +295,56 @@ This log records our actual development journey, empirical observations, failure
   - Fold metrics: `reports/metrics/cv_results_M4_lgbm.csv`
   - OOF predictions & probabilities: `reports/metrics/oof_M4_lgbm.npz`
   - Figure: `reports/figures/p12_lgbm_iterations.png`
+
+---
+
+### Entry 12: Cross-Model CV Evaluation, Pre-Registered Model Selection Rule & Primary Deployment Candidate (Phase 13)
+- **Date:** October 13, 2026
+- **Question Raised:** When evaluating all five model paradigms (M0 Dummy, M1 Logistic Regression, M2 Decision Tree, M3 Random Forest, M4 LightGBM) across identical 5-fold cross-validation splits, which model satisfies the pre-registered operational false alarm rate constraint ($\le 0.5\%$), delivers superior macro-F1 and rare-class sensitivity, and wins according to our pre-registered model selection protocol?
+- **Evaluation Architecture & Methodology:**
+  - **Harness:** Unified evaluation using `summarize_cv` and `paired_diff` in `src/evaluation.py` across identical 5 folds on 116,466 training samples.
+  - **Pre-Registered Selection Protocol (Locked at `2026-10-13 00:05`):**
+    1. **FPR Gate (Operational Alert-Fatigue Barrier):** Discard any model whose mean CV false positive rate exceeds $0.5\%$ ($0.0050$).
+    2. **Primary Ranking:** Rank remaining compliant models by mean CV Macro-F1.
+    3. **Tie-Break Criterion:** Acknowledge that cross-validation folds share training data and are not independent (Nadeau & Bengio, 2003). If the gap between two models is within one pooled fold standard deviation ($|\Delta| < \sigma_{\text{pooled}}$), treat the performance difference as a statistical tie and break it strictly in pre-registered hierarchical order:
+       - *(a)* Higher combined rare-class recall ($\text{Recall}_{\text{R2L}} + \text{Recall}_{\text{U2R}}$);
+       - *(b)* Lower binary FPR;
+       - *(c)* Faster compute (fit time + inference latency);
+       - *(d)* Simpler model complexity.
+- **Key Empirical Discoveries & Results:**
+  1. **FPR Gate Evaluation:**
+     - `M0_dummy`: $\text{FPR} = 0.00000$ $\rightarrow$ **PASS** (trivial baseline; 100% false negative rate).
+     - `M1_logreg`: $\text{FPR} = 0.01810$ ($1.810\%$) $\rightarrow$ **FAIL** (exceeds $0.50\%$ threshold by $3.6\times$; ~18,100 false alarms/day; disqualified from enterprise deployment).
+     - `M2_tree`: $\text{FPR} = 0.00164$ ($0.164\%$) $\rightarrow$ **PASS** (~1,640 false alarms/day).
+     - `M3_rf`: $\text{FPR} = 0.00036$ ($0.036\%$) $\rightarrow$ **PASS** (~360 false alarms/day).
+     - `M4_lgbm`: $\text{FPR} = 0.00030$ ($0.030\%$) $\rightarrow$ **PASS** (~300 false alarms/day).
+  2. **Macro-F1 Ranking Among Compliant Models:**
+     1. **`M4_lgbm` (LightGBM):** Macro-F1 $= \mathbf{0.9563 \pm 0.0249}$ (Accuracy $0.9995$, FPR $0.030\%$, FNR $0.054\%$).
+     2. **`M3_rf` (Random Forest):** Macro-F1 $= 0.9498 \pm 0.0157$ (Accuracy $0.9993$, FPR $0.036\%$, FNR $0.106\%$).
+     3. **`M2_tree` (Decision Tree):** Macro-F1 $= 0.9122 \pm 0.0158$ (Accuracy $0.9983$, FPR $0.164\%$, FNR $0.151\%$).
+     4. **`M0_dummy` (Dummy):** Macro-F1 $= 0.1505 \pm 0.0000$ (Accuracy $0.6033$, FPR $0.000\%$, FNR $100.0\%$).
+  3. **M3 vs. M4 Head-to-Head & Tie-Break Analysis:**
+     - Absolute Macro-F1 difference: $|\Delta| = 0.0065$ ($0.65$ percentage points).
+     - Pooled fold standard deviation: $\sigma_{\text{pooled}} = 0.0203$.
+     - Since $|\Delta| < \sigma_{\text{pooled}}$, M3 and M4 are declared a **TIE** under Step 3 of the pre-registered protocol.
+     - **Tie-Break Criteria Evaluation:**
+       - **(a) Combined Rare-Class Recall:**
+         - `M4_lgbm`: $\text{Recall}_{\text{R2L}} (98.37\%) + \text{Recall}_{\text{U2R}} (81.67\%) = \mathbf{180.04\%}$
+         - `M3_rf`: $\text{Recall}_{\text{R2L}} (96.24\%) + \text{Recall}_{\text{U2R}} (78.89\%) = \mathbf{175.13\%}$
+         - **$\rightarrow$ M4 wins decisively by $+4.91$ percentage points!**
+       - **(b) Lower FPR:**
+         - `M4_lgbm` ($0.030\%$) vs. `M3_rf` ($0.036\%$).
+         - **$\rightarrow$ M4 wins by reducing daily false alarms by an additional ~60 per million connections.**
+       - **(c) Compute Efficiency:**
+         - Fit time: `M4_lgbm` ($6.39$s) vs. `M3_rf` ($8.82$s).
+         - **$\rightarrow$ M4 wins with 27.5% faster training convergence.**
+  4. **Primary Deployment Candidate:**
+     - **`M4_lgbm` (LightGBM)** is officially crowned the champion model, winning the pre-registered protocol on every single tie-break criterion. It advances as the primary architecture for hyperparameter tuning (Phases 16–20) and final held-out test evaluation.
+- **Artifacts Generated:**
+  - Metrics comparison table: `reports/metrics/comparison_cv.csv`
+  - Figures:
+    - `reports/figures/p13_macro_f1_box.png` (Per-fold Macro-F1 boxplot across 5 folds)
+    - `reports/figures/p13_per_class_recall.png` (Per-class recall comparison across all 5 families)
+    - `reports/figures/p13_fpr_fnr.png` (Operational FPR vs. FNR with 0.5% threshold)
+    - `reports/figures/p13_fit_time.png` (Cross-validation training time comparison)
+    - `reports/figures/p13_predict_time.png` (Inference latency per 1k samples)

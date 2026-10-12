@@ -121,3 +121,45 @@ def save_oof(name: str, y_pred, y_proba, out_dir=METRICS_DIR):
 def load_oof(name: str, out_dir=METRICS_DIR):
     data = np.load(out_dir / f"oof_{name}.npz", allow_pickle=True)
     return data["y_pred"], data["y_proba"]
+
+
+
+def summarize_cv(results: dict, fpr_limit: float = 0.005) ->pd.DataFrame:
+    rows = []
+
+    for name, df in results.items():
+        row = {
+            "model": name,
+            "n_folds": len(df),
+            "macro_f1_mean": df["macro_f1"].mean(),
+            "macro_f1_sd": df["macro_f1"].std(),
+            "accuracy_mean": df["accuracy"].mean(),
+            "fpr_mean": df["fpr"].mean(),
+            "fnr_mean": df["fnr"].mean(),
+            "fit_time_mean": df["fit_time"].mean(),
+            "predict_time_per_1k_mean": df["predict_time_per_1k"].mean(),
+            "passes_fpr": bool(df["fpr"].mean() <= fpr_limit),
+        }
+        for fam in FAMILIES:
+            row[f"recall_{fam}_mean"] = df[f"recall_{fam}"].mean()
+            row[f"recall_{fam}_sd"] = df[f"recall_{fam}"].std()
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def paired_diff(a: pd.DataFrame, b: pd.DataFrame, metric: str) -> dict:
+    """Per-fold paired comparison (a - b). a and b must share identical folds.
+
+    Returns per-fold deltas, mean delta, and win counts.
+    """
+    assert len(a) == len(b), "fold count mismatch"
+    assert (a["fold"].values == b["fold"].values).all(), "fold indices don't match"
+    deltas = a[metric].values - b[metric].values
+    return {
+        "deltas": deltas,
+        "mean_delta": float(deltas.mean()),
+        "wins_a": int((deltas > 0).sum()),
+        "wins_b": int((deltas < 0).sum()),
+        "ties": int((deltas == 0).sum()),
+        "n_folds": len(deltas),
+    }

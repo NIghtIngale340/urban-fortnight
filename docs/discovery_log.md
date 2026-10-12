@@ -155,7 +155,49 @@ This log records our actual development journey, empirical observations, failure
   - **The "0% False Alarm" Fallacy:** M0 achieves the theoretical ideal of zero false alarms ($\text{FPR} = 0\%$), yet it is completely useless as an IDS because it allows 100% of attacks to penetrate undetected ($\text{FNR} = 100\%$).
   - **Accuracy as a Deceptive Metric:** M0 appears to have $>60\%$ accuracy despite having zero detection capability, reinforcing why Macro-F1, per-class recall, and paired FPR/FNR are mandatory.
   - Any valid machine learning candidate (M1–M4) must substantially beat Macro-F1 $> 0.1505$ and FNR $\ll 1.0000$ while maintaining $\text{FPR} \le 0.0050$.
-- **Artifacts Generated:** Saved fold metrics to `reports/metrics/cv_results_M0_dummy.csv`.
+- **Artifacts Generated:** Saved fold metrics to `reports/metrics/cv_results_M1_logreg.csv`.
+
+---
+
+### Entry 9: Decision Tree Baseline (M2), Non-Linear Threshold Boundaries & The Overfitting Dilemma (Phase 10)
+- **Date:** October 12, 2026
+- **Question Raised:** Can non-linear axis-aligned splits solve the alert fatigue problem ($\text{FPR} \le 0.5\%$) while lifting Macro-F1, and what happens to model generalization when individual trees grow without depth constraints?
+- **Model Architecture & Preprocessing (`M2_tree`):**
+  - **Estimator:** `DecisionTreeClassifier(class_weight='balanced', min_samples_leaf=2, random_state=42, max_depth=None)`.
+  - **Preprocessing:** Pipeline with `scale=False, engineered=False` (trees are invariant to monotonic transformations; omitting scaling cuts execution time while preserving raw interpretable split thresholds).
+- **Key Empirical Discoveries & Results (5-Fold CV on 116,466 training samples):**
+  1. **Performance Surge & Alert Fatigue Resolution:**
+     - **Macro-F1:** Jumps from $0.7702$ (Logistic Regression) to **$0.9122 \pm 0.0158$** ($+14.2$ percentage points!).
+     - **Binary FPR:** Plummets from $1.81\%$ down to **$0.0016 \pm 0.0003$ ($0.16\%$)**!
+     - **Operational Compliance:** $0.16\%$ comfortably clears the $\le 0.50\%$ enterprise false alarm ceiling. In a 1,000,000 requests/day environment, daily false alarms drop from ~18,100 down to ~1,600 (a **91.2% reduction in false alert fatigue**).
+     - **Binary FNR:** $0.0015 \pm 0.0004$ ($0.15\%$).
+     - **Accuracy:** $0.9983 \pm 0.0001$ ($99.83\%$).
+     - **Fit Latency:** Rapid training at **$1.21$s per fold** (vs. ~50.1s for Logistic Regression).
+  2. **Per-Class Performance:**
+     - `Normal`: Recall $99.84\%$, F1 $0.9987$
+     - `DoS`: Recall $99.97\%$, F1 $0.9997$
+     - `Probe`: Recall $98.59\%$, F1 $0.9822$
+     - `R2L`: Recall $94.99\%$, F1 $0.9348$ (up from $0.6557$ in M1)
+     - `U2R`: Recall $69.17\%$, F1 $0.6456$ (more than double M1's $0.2962$)
+  3. **Feature Importance (MDI) & Split Mechanisms:**
+     - Top feature: `dst_host_srv_count` accounts for **$29.99\%$** of total Gini impurity reduction.
+     - Followed by `src_bytes` ($20.01\%$), `dst_host_serror_rate` ($15.35\%$), and `dst_bytes` ($11.03\%$).
+     - These top 4 features explain over **$76\%$ of the total discriminative structure**.
+  4. **The Overfitting & Depth Validation Curve Discovery (Figure `p10_validation_curve_depth.png`):**
+     - Tested `max_depth` $\in [2, 3, 4, 6, 8, 10, 12, 16, 20, \text{None}]$ across 50 CV fits.
+     - **Shallow Depths (2–6):** Suffer severe underfitting (Macro-F1 $0.4086 \rightarrow 0.6933$).
+     - **Intermediate Depths (8–16):** Strong generalization growth (Macro-F1 reaches $0.8940$ at depth 16).
+     - **Deep / Unconstrained Trees (20 vs. None):**
+       - Unconstrained tree reaches **depth 23 with 224 leaves**.
+       - Training Macro-F1 increases from $0.9804 \rightarrow 0.9847$, but CV Macro-F1 degrades from $0.9146 \rightarrow 0.9122$.
+       - The generalization gap widens to **$7.25\%$** ($0.9847$ train vs $0.9122$ CV).
+  5. **Core Justification for Phase 11 (Random Forest M3):**
+     - Single unpruned decision trees have high variance and memorize rare-class leaf noise (e.g., isolating 2-sample U2R leaves).
+     - This provides direct theoretical and empirical justification for ensemble bagging in **Phase 11 (Random Forest M3)**: averaging across hundreds of decorrelated trees reduces variance without sacrificing the non-linear threshold advantages.
+- **Artifacts Generated:**
+  - Fold metrics: `reports/metrics/cv_results_M2_tree.csv`
+  - Figure: `reports/figures/p10_validation_curve_depth.png`
+
 
 ---
 

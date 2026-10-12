@@ -4,6 +4,7 @@ from sklearn.dummy import DummyClassifier
 from src.preprocessing import build_pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
 
 
 def get_models() -> dict:
@@ -42,4 +43,16 @@ def get_models() -> dict:
             scale=False,
             engineered=False,
         ),
+        "M3_rf": build_pipeline(
+            RandomForestClassifier(
+                n_estimators=300,
+                class_weight="balanced_subsample",
+                max_features="sqrt",
+                min_samples_leaf=2,
+                oob_score=True,
+                n_jobs=-1,
+                random_state=SEED,
+            ),
+            scale=False, engineered=False
+        )
     }

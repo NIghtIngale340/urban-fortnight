@@ -198,42 +198,58 @@ This log records our actual development journey, empirical observations, failure
   - Fold metrics: `reports/metrics/cv_results_M2_tree.csv`
   - Figure: `reports/figures/p10_validation_curve_depth.png`
 
-
 ---
 
-### Entry 8: Logistic Regression Linear Baseline & The Linear Alert Fatigue Barrier (Phase 9)
-- **Date:** October 7, 2026
-- **Question Raised:** How effectively can a linear model separate network attack classes from normal traffic under balanced class weighting, and does a linear decision boundary satisfy the enterprise false alarm constraint ($\text{FPR} \le 0.5\%$)?
-- **Model Architecture & Preprocessing (`M1_logreg`):**
-  - **Estimator:** Multinomial `LogisticRegression(solver='lbfgs', max_iter=3000, class_weight='balanced', random_state=42)`.
-  - **Preprocessing:** Pipeline with `scale=True` (StandardScaler on all numeric features, log1p + StandardScaler on heavy-tailed columns) and `OneHotEncoder(handle_unknown='ignore')` yielding 115 input features.
-  - **Class Weighting:** Inversely proportional to class frequencies ($w_c = N / (K \cdot N_c)$): Normal ($0.33$), DoS ($0.53$), Probe ($13.67$), R2L ($29.15$), U2R ($554.60$).
+### Entry 10: Random Forest Bagging Ensemble (M3), OOB Consistency & Sub-0.05% Alert Fatigue Suppression (Phase 11)
+- **Date:** October 12, 2026
+- **Question Raised:** Can bootstrap aggregation (bagging) with random feature subspaces ($\sqrt{p}$) resolve single-tree variance and depth memorization, reduce enterprise false alarm rates below $0.05\%$, and provide trustworthy out-of-bag validation?
+- **Model Architecture & Preprocessing (`M3_rf`):**
+  - **Estimator:** `RandomForestClassifier(n_estimators=300, class_weight='balanced_subsample', max_features='sqrt', min_samples_leaf=2, oob_score=True, n_jobs=-1, random_state=42)`.
+  - **Preprocessing:** Pipeline with `scale=False, engineered=False` (tree ensembles are invariant to monotonic transformations).
+  - **Ensemble Upgrades:**
+    - `n_estimators=300`: Ample ensemble size to achieve empirical convergence on bootstrap variance reduction.
+    - `class_weight='balanced_subsample'`: Re-computes class weighting on each bootstrap draw ($\mathcal{D}^{*b}$) rather than on the aggregate training set, preventing rare classes like U2R from being overwhelmed in individual trees.
+    - `oob_score=True`: Evaluates predictions on out-of-bag samples without separate validation partitioning.
 - **Key Empirical Discoveries & Results (5-Fold CV on 116,466 training samples):**
-  1. **Convergence Sensitivity & Necessity of Scaling:**
-     - Fitting without feature scaling (`scale=False`) triggers `ConvergenceWarning: lbfgs failed to converge` even after hundreds of iterations, driven by extreme feature variance (e.g., `src_bytes` with skewness $>300$ and values up to $6.9 \times 10^8$).
-     - With `scale=True`, L-BFGS converges smoothly across all 5 folds with zero convergence warnings.
-  2. **Performance Summary:**
-     - **Accuracy:** $0.9882 \pm 0.0009$ ($98.82\%$).
-     - **Macro-F1:** $0.7702 \pm 0.0043$ (Range: $0.7666$ to $0.7767$). A massive leap over M0 Dummy ($0.1505$).
-     - **Binary FPR:** **$0.0181 \pm 0.0015$ ($1.81\%$)**. **Violates the operational limit ($\le 0.50\%$) by 3.6x!**
-     - **Binary FNR:** $0.0013 \pm 0.0002$ ($0.13\%$; captures $>99.8\%$ of attacks).
-     - **Per-Class Breakdown:**
-       - `Normal`: Recall $98.19\%$, F1 $0.9904$
-       - `DoS`: Recall $99.86\%$, F1 $0.9988$
-       - `Probe`: Recall $98.88\%$, F1 $0.9099$
-       - `R2L`: Recall $98.00\%$, F1 $0.6557$ (Precision: $49.31\%$)
-       - `U2R`: Recall $78.89\%$, F1 $0.2962$ (Precision: $18.36\%$)
-     - **Fit Latency:** $\approx 50.4$s per fold; inference latency $\approx 0.0019$ ms per 1,000 packets.
-  3. **The Core Theoretical Finding for Section III & IV of the Final Report:**
-     - **The Linear Decision Boundary Barrier:** Under balanced class weights, logistic regression bends its hyperplane to capture rare attacks (achieving high recall: $98.0\%$ R2L, $78.9\%$ U2R). However, because linear hyperplanes cannot model non-linear boundaries between packet attributes (e.g. valid web requests vs. stealthy HTTP probes), it over-flags benign traffic as intrusive.
-     - **Operational Impact:** An FPR of $1.81\%$ means that out of 1,000,000 normal transactions per day, **~18,100 false alarms** are generated daily, overwhelming SOC analysts and causing alert fatigue.
-     - This provides clear empirical justification for transitioning to non-linear tree-based architectures (Decision Tree M2, Random Forest M3, LightGBM M4).
-  4. **Interpretability & Top Coefficient Drivers:**
-     - `DoS`: Driven by `flag_S0` (+4.76), `service_ecr_i` (+4.61), `protocol_type_icmp` (+4.26) — classic ICMP floods and half-open SYN connections.
-     - `Normal`: Driven by `service_http` (+4.08), `is_guest_login` (+3.90).
-     - `R2L`: Driven by `service_imap4` (+6.64), `protocol_type_tcp` (+3.92).
-     - `U2R`: Driven by `service_telnet` (+9.41), `logged_in` (+4.34) — interactive terminal sessions leading to unauthorized root transitions.
-- **Artifacts Generated:** Saved fold metrics to `reports/metrics/cv_results_M1_logreg.csv`.
+  1. **Performance Surge Across All Metrics:**
+     - **Accuracy:** $0.9993 \pm 0.0001$ ($99.93\%$).
+     - **Macro-F1:** Rises to **$0.9498 \pm 0.0157$** ($+3.76$ points over Decision Tree M2's $0.9122$, and $+17.96$ points over Logistic Regression M1's $0.7702$).
+     - **Binary FPR:** Compresses to an astounding **$0.00036 \pm 0.00024$ ($0.036\%$)**!
+       - In an enterprise network processing 1,000,000 connections/day, daily false alarms drop from ~18,100 (Logistic Regression) and ~1,640 (Decision Tree) down to **only ~360 alarms per day**.
+       - This is **less than $1/13\text{th}$ of our operational target ceiling ($\le 0.5\%$)**, effectively extinguishing alert fatigue.
+     - **Binary FNR:** Drops to **$0.00106 \pm 0.00036$ ($0.11\%$)**, capturing $>99.89\%$ of all attacks.
+  2. **Rare-Class Stabilization:**
+     - `Normal`: Recall $99.96\%$, F1 $0.9995$
+     - `DoS`: Recall $99.98\%$, F1 $0.9999$
+     - `Probe`: Recall $99.35\%$, F1 $0.9944$
+     - `R2L`: Recall $96.24\%$, F1 **$0.9721$** (Precision: $98.2\%$)
+     - `U2R`: Recall $78.89\%$, F1 **$0.7830$** (Precision: $77.8\%$; up from $0.6456$ in Decision Tree and $0.2962$ in Logistic Regression).
+  3. **Out-of-Bag (OOB) vs. Cross-Validation Consistency:**
+     - **OOB Accuracy:** $0.9994$ (matches 5-fold CV accuracy $0.9993$).
+     - **OOB Macro-F1:** **$0.9503$** (matches 5-fold CV Macro-F1 $0.9498$ within $0.05\%$).
+     - This empirically confirms that out-of-bag validation acts as an unbiased internal estimator, verifying the integrity of the 5-fold cross-validation harness.
+  4. **Smooth Feature Subspace Importances (MDI):**
+     - In Decision Tree M2, `dst_host_srv_count` heavily monopolized the top split ($29.99\%$).
+     - In Random Forest M3, feature subspace sampling ($m = \sqrt{115} \approx 10$) decorrelates the trees, distributing importance smoothly:
+       - `dst_host_srv_count`: $8.67\%$
+       - `src_bytes`: $8.02\%$
+       - `dst_bytes`: $5.88\%$
+       - `count`: $4.36\%$
+       - `dst_host_diff_srv_rate`: $4.08\%$
+       - `logged_in`: $4.06\%$
+       - `service_http`: $3.92\%$
+       - `dst_host_serror_rate`: $3.75\%$
+  5. **Tree-Count Validation Curve (Figure `p11_rf_n_estimators.png`):**
+     - Tested $B \in [25, 50, 100, 200, 300]$ trees.
+     - As $B$ increases, CV Macro-F1 rises from $0.9452$ ($B=25$) to $0.9542$ ($B=100$), and smoothly plateaus around $\sim 0.950$ through $B=300$.
+     - Unlike depth unconstraining in single trees, increasing the number of bagging trees **never overfits**, empirically confirming Breiman's Law of Large Numbers for Random Forests.
+  6. **Inference Latency:**
+     - Single-thread inference: $47.5$ ms per 1,000 connections ($\approx 0.0475$ ms per query, or $>21,000$ connections/sec), proving high operational throughput for real-time intrusion monitoring.
+- **Artifacts Generated:**
+  - Fold metrics: `reports/metrics/cv_results_M3_rf.csv`
+  - OOF predictions & probabilities: `reports/metrics/oof_M3_rf.npz`
+  - Figure: `reports/figures/p11_rf_n_estimators.png`
+
 
 
 

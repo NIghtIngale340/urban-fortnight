@@ -49,14 +49,24 @@ def binary_view(y_true, y_pred) -> dict:
     fnr = float(((~true_normal) & pred_normal).sum() / n_attack) if n_attack else 0.0
     return {"fpr": fpr, "fnr": fnr}
 
-def evaluate_cv(pipeline, X, y, cv) -> tuple[pd.DataFrame, np.ndarray]:
-    """Run CV. Returns (fold_df, oof_predictions). Pass TRAIN data only.
+def _reorder_proba_to_families(proba, classes):
+    classes = list(classes)
+    out = np.zeros((len(proba), len(FAMILIES)), dtype=float)
+    for i, f in enumerate(FAMILIES):
+        if f in classes:
+            out[:, i] = proba[:, classes.index(f)]
+    return out
 
-    Manual loop (instead of cross_val_predict) so we can time fit/predict per fold.
-    The estimator is cloned each fold so no state leaks between folds.
+
+def evaluate_cv(pipeline, X, y, cv) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
+    """Run CV. Returns (fold_df, oof_pred, oof_proba). Pass TRAIN data only.
+
+    oof_pred : (n,) array of predicted family labels
+    oof_proba: (n, 5) array, columns reordered into FAMILIES order
     """
     fold_rows = []
-    oof = np.full(len(y), None, dtype=object)
+    oof_pred = np.full(len(y), None, dtype=object)
+    oof_proba = np.full((len(y), len(FAMILIES)), np.nan)
 
     for fold_i, (tr_idx, va_idx) in enumerate(cv.split(X, y)):
         X_tr, X_va = X.iloc[tr_idx], X.iloc[va_idx]
@@ -73,16 +83,25 @@ def evaluate_cv(pipeline, X, y, cv) -> tuple[pd.DataFrame, np.ndarray]:
         pred_time = time.perf_counter() - t0
         pred_time_per_1k = pred_time / len(y_va) * 1000.0
 
-        row = {"fold": fold_i,
-               "fit_time": fit_time,
-               "predict_time_per_1k": pred_time_per_1k}
+        proba = est.predict_proba(X_va)
+        proba = _reorder_proba_to_families(proba, est.named_steps["clf"].classes_)
+
+        row = {
+            "fold": fold_i,
+            "fit_time": fit_time,
+            "predict_time_per_1k": pred_time_per_1k,
+        }
         row.update(multiclass_metrics(y_va, y_pred, labels=FAMILIES))
         row.update(binary_view(y_va, y_pred))
         fold_rows.append(row)
 
-        oof[va_idx] = y_pred
+        oof_pred[va_idx] = y_pred
+        oof_proba[va_idx] = proba
 
-    return pd.DataFrame(fold_rows), oof
+    assert not np.isnan(oof_proba).any(), "OOF probabilities contain NaN (unfilled rows)"
+    assert not pd.isna(oof_pred).any(), "OOF predictions contain unfilled rows"
+
+    return pd.DataFrame(fold_rows), oof_pred, oof_proba
 
 
 def save_results(name: str, fold_df: pd.DataFrame, out_dir=METRICS_DIR):
@@ -90,3 +109,15 @@ def save_results(name: str, fold_df: pd.DataFrame, out_dir=METRICS_DIR):
     path = out_dir / f"cv_results_{name}.csv"
     fold_df.to_csv(path, index=False)
     return path
+
+
+def save_oof(name: str, y_pred, y_proba, out_dir=METRICS_DIR):
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"oof_{name}.npz"
+    np.savez_compressed(path, y_pred=y_pred, y_proba=y_proba)
+    return path
+
+
+def load_oof(name: str, out_dir=METRICS_DIR):
+    data = np.load(out_dir / f"oof_{name}.npz", allow_pickle=True)
+    return data["y_pred"], data["y_proba"]

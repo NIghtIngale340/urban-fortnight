@@ -5,6 +5,8 @@ from src.preprocessing import build_pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
+from lightgbm import LGBMClassifier
+
 
 
 def get_models() -> dict:
@@ -52,6 +54,24 @@ def get_models() -> dict:
                 oob_score=True,
                 n_jobs=-1,
                 random_state=SEED,
+            ),
+            scale=False, engineered=False
+        ),
+        "M4_lgbm": build_pipeline(
+            LGBMClassifier(
+                n_estimators=300,
+                learning_rate=0.05,
+                num_leaves=31,
+                min_child_samples=10,
+                subsample=0.8,
+                subsample_freq=1,
+                colsample_bytree=0.8,
+                class_weight="balanced",
+                deterministic=True,
+                force_row_wise=True,
+                random_state=SEED,
+                n_jobs=-1,
+                verbose=-1,
             ),
             scale=False, engineered=False
         )

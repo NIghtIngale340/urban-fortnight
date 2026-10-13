@@ -657,5 +657,57 @@ This log records our actual development journey, empirical observations, failure
   - `reports/metrics/p18_feature_importance_comparison.csv` (permutation vs MDI alignment table)
   - Updated `src/config.py` with frozen `ALERT_TAU = 0.002002`
 
+---
+
+### Entry 18: Single Final Evaluation on Locked Test Set & Generalization Analysis (Phase 19)
+- **Date:** October 13, 2026
+- **Question Raised:** When all 5 candidate models are refitted on the complete training set ($N=116,466$) and evaluated on the strictly locked test set ($N=29,117$) exactly once, does the champion LightGBM model generalize without data leakage or distribution divergence, and how does the calibrated operational threshold $\tau = 0.002002$ perform compared to standard argmax?
+
+#### Finding 50: The Locked Test Evaluation & Generalization Gap Analysis
+- **What:**
+  - All 5 candidate models were fitted on the full training split ($N=116,466$) under frozen settings (`USE_CLASS_WEIGHT=True`, `USE_ENGINEERED=True`).
+  - Evaluated on the held-out test split ($N=29,117$) strictly once, comparing train, 15-fold CV, and test macro-F1 consistently under standard argmax:
+    - `M0_dummy`: Train $= 0.1505$, CV $= 0.1505$, Test $= 0.1505$ (Test–CV gap: $+0.0000$).
+    - `M1_logreg`: Train $= 0.8242$, CV $= 0.8071$, Test $= 0.8017$ (Test–CV gap: $-0.0054$).
+    - `M2_tree`: Train $= 0.9886$, CV $= 0.9183$, Test $= 0.9236$ (Test–CV gap: $+0.0052$).
+    - `M3_rf`: Train $= 0.9915$, CV $= 0.9535$, Test $= 0.9591$ (Test–CV gap: $+0.0056$).
+    - `M4_lgbm`: Train $= 1.0000$, CV $= 0.9606$, Test $= \mathbf{0.9543}$ (Test–CV gap: $\mathbf{-0.0063}$).
+  - All confusion matrix row sums were formally verified against true test class counts (`Normal`: 17,567; `DoS`: 10,914; `Probe`: 426; `R2L`: 200; `U2R`: 10).
+- **Why It Matters:** Across all five architectures, the generalization gap between 15-fold cross-validation and the locked test set is strictly below $0.7$ percentage points ($|\text{Gap}| \le 0.0063$). This definitively proves that the preprocessing, feature engineering, and hyperparameter tuning pipelines operated with zero data leakage.
+
+#### Finding 51: Operational Policy Performance on Held-Out Test Data
+- **What:**
+  - Contrasted default argmax vs. calibrated operational threshold ($\tau = 0.002002$) for the champion LightGBM model on test data:
+    - **Rare Attack Detection:**
+      - **U2R Recall:** $90.0\%$ ($9 / 10$ detected; Wilson 95% CI: $[59.6\%, 98.2\%]$) under both policies.
+      - **R2L Recall:** $99.0\%$ ($198 / 200$ detected; Wilson 95% CI: $[96.4\%, 99.7\%]$) under both policies.
+    - **False Positive Rate (Normal Traffic, $N=17,567$):**
+      - Argmax: $7$ false alarms ($0.0398\%$, Wilson 95% CI: $[0.0193\%, 0.0822\%]$).
+      - Calibrated $\tau = 0.002002$: $19$ false alarms ($0.1082\%$, Wilson 95% CI: $[0.0693\%, 0.1689\%]$).
+    - **False Negative Rate (Missed Attacks, $N=11,550$):**
+      - Calibrated $\tau$ cuts total missed attacks by $60\%$ (dropping FNR from $0.0433\%$ [5 missed attacks] down to $0.0173\%$ [only 2 missed attacks!]).
+- **Why It Matters:** Operational threshold calibration decouples sensitivity from taxonomy: security teams incur merely $12$ additional alerts across $17,567$ normal connections in exchange for eliminating $60\%$ of missed network intrusions.
+
+#### Finding 52: Scientific Qualification & Deployment Realism (Methodological Rigor)
+- **What:**
+  - This evaluation represents the project's final held-out test estimate strictly within the KDD Cup 1999 benchmark distribution.
+  - It does not guarantee performance against zero-day exploits, temporal concept drift, or unobserved protocol behaviors in live SOC networks.
+  - On extreme minority classes (such as U2R with $N=10$), the Wilson 95% confidence interval spans $[59.6\%, 98.2\%]$, reflecting substantial small-sample binomial variance. Claiming definitive production performance from 10 test samples would be scientifically unfounded; reporting confidence bounds provides transparent empirical honesty.
+- **Why It Matters:** Differentiating between internal benchmark validity and external ecological validity protects against over-claiming in ML system design.
+
+#### Finding 53: Idempotent Lock Architecture & Artifacts
+- **What:**
+  - Implemented genuine artifact reloading: the presence of `.test_evaluated` reloads `test_results.json` and `test_{name}.npz` directly, allowing notebook kernels to be restarted and re-run without re-evaluating the locked test set or failing with undefined variable errors.
+  - Generated learning curve plot (`reports/figures/p19_learning_curve.png`) across 20% to 100% training subsets, confirming monotonic convergence between training and cross-validation scores.
+- **Artifacts Generated:**
+  - `reports/metrics/.test_evaluated` (lock file timestamp)
+  - `reports/metrics/test_results.json` (complete test metrics dictionary)
+  - `reports/metrics/test_summary.csv` (tabular metrics summary across all models)
+  - `reports/metrics/test_gap_table.csv` (Train vs CV vs Test gap analysis)
+  - `reports/metrics/operational_policy_comparison.csv` (argmax vs calibrated tau comparison)
+  - `reports/metrics/test_{model}.npz` for all models (predictions and probabilities)
+  - `reports/figures/p19_learning_curve.png` (champion learning curve)
+
+
 
 

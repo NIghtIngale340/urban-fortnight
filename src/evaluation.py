@@ -361,3 +361,47 @@ def choose_tau(sweep: pd.DataFrame, fpr_max: float = 0.001) -> float:
     if valid.empty:
         raise ValueError(f"No tau found with FPR <= {fpr_max}. Max tau FPR is {sweep['fpr'].min():.5f}")
     return float(valid["tau"].min())
+
+
+
+def evaluate_test(fitted, X_test, y_test, tau=None):
+
+    y_pred_argmax = fitted.predict(X_test)
+    proba = fitted.predict_proba(X_test)
+
+    proba = _reorder_proba_to_families(proba, fitted.named_steps["clf"].classes_)
+
+    y_pred = y_pred_argmax
+    if tau is not None:
+        y_pred = decide(proba, tau)
+
+    metrics = multiclass_metrics(y_test, y_pred)
+    metrics.update(binary_view(y_test, y_pred))
+
+
+    return metrics, y_pred, proba
+
+
+def gap_table(train_f1, cv_f1, test_f1, model_names):
+
+    rows = []
+    for name in model_names:
+        tr = train_f1.get(name, np.nan)
+        cv = cv_f1.get(name, np.nan)
+        te = test_f1.get(name, np.nan)
+
+        rows.append({
+            "model": name,
+            "train_macro_f1": tr,
+            "cv_macro_f1": cv,
+            "test_macro_f1": te,
+            "cv_train_gap": cv - tr,
+            "test_cv_gap": te - cv,
+        })
+
+    return pd.DataFrame(rows)
+
+
+
+
+

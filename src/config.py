@@ -14,7 +14,9 @@ METRICS_DIR = PROJECT_ROOT / "reports" / "metrics"
 FIGURES_DIR = PROJECT_ROOT / "reports" / "figures"
 
 
-
+# Frozen global settings (decided in Phase 14 ablations). Do not change after this.
+USE_CLASS_WEIGHT = True    # <-- set from Experiment A reasoning
+USE_ENGINEERED = True      # <-- set from Experiment B adoption rule (adopt_eng was True: mean gain +0.0054 > 0, 0 drops)
 
 SEED = 42
 

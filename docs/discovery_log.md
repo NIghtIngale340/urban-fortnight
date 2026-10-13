@@ -348,3 +348,51 @@ This log records our actual development journey, empirical observations, failure
     - `reports/figures/p13_fpr_fnr.png` (Operational FPR vs. FNR with 0.5% threshold)
     - `reports/figures/p13_fit_time.png` (Cross-validation training time comparison)
     - `reports/figures/p13_predict_time.png` (Inference latency per 1k samples)
+
+---
+
+### Entry 13: Controlled Ablations (Class Weights & Engineered Features) and Frozen Model Settings (Phase 14)
+- **Date:** October 13, 2026
+- **Question Raised:** What is the isolated causal effect of cost-sensitive class weighting (`class_weight='balanced'`) and row-wise feature engineering (`engineered=True`) across all four classifiers, and does the evidence justify freezing these settings for all downstream phases?
+
+#### Finding 36 (CORRECTS Entry 8): What Actually Drives Logistic Regression's False Positive Rate
+- **What:**
+  - `M1_logreg` FPR with weights ON: **$0.01810$ ($1.810\%$)**; with weights OFF: **$0.00144$ ($0.144\%$)**.
+  - Rare-class recall when weights were removed:
+    - `U2R` recall collapsed from **$78.89\%$** down to **$47.78\%$** ($-31.11$ points).
+    - `R2L` recall dropped from **$98.00\%$** down to **$87.48\%$** ($-10.52$ points).
+  - Precision on `R2L` jumped from $49.31\%$ to $89.84\%$; precision on `U2R` rose from $18.36\%$ to $69.62\%$.
+- **Why It Matters & Correction of Entry 8:**
+  - Entry 8 originally conjectured that a linear decision boundary fundamentally cannot separate normal traffic from attacks without producing high false alarms.
+  - The empirical ablation disproves this claim: when class weighting is disabled, Logistic Regression's false positive rate plummets to $0.144\%$, comfortably passing under our $\le 0.50\%$ alert fatigue limit.
+  - Therefore, the high false alarm rate was **primarily driven by the balanced class weighting**, which forces the hyperplane deep into normal traffic space to capture extreme minority points.
+  - However, unweighted training degrades minority attack detection across the board. Most severely, for `M4_lgbm`, disabling class weights causes catastrophic collapse: Macro-F1 plummets from $0.9563$ down to **$0.3673$**, with `U2R` recall dropping to **$0.00\%$** (completely undetected) and `R2L` recall falling to $15.95\%$. Cost-sensitive weighting is strictly indispensable for gradient boosting.
+
+#### Finding 37: Engineered-Features Ablation Decision (Experiment B)
+- **What:**
+  - Pre-registered adoption rule (stamped `2026-10-13 12:15`): Adopt `USE_ENGINEERED = True` only if BOTH hold:
+    1. The mean Macro-F1 gain across M1–M4 is positive ($> 0$).
+    2. No single model's Macro-F1 drops by more than its own fold standard deviation.
+  - Empirical 5-fold cross-validation results:
+    - `M1_logreg`: Macro-F1 off $= 0.7702$, on $= 0.7744$ ($\Delta = \mathbf{+0.0042}$, fold SD $= 0.0043$; drop $>$ SD: False)
+    - `M2_tree`: Macro-F1 off $= 0.9122$, on $= 0.9182$ ($\Delta = \mathbf{+0.0060}$, fold SD $= 0.0158$; drop $>$ SD: False)
+    - `M3_rf`: Macro-F1 off $= 0.9498$, on $= 0.9574$ ($\Delta = \mathbf{+0.0076}$, fold SD $= 0.0157$; drop $>$ SD: False)
+    - `M4_lgbm`: Macro-F1 off $= 0.9563$, on $= 0.9602$ ($\Delta = \mathbf{+0.0038}$, fold SD $= 0.0249$; drop $>$ SD: False)
+  - Mean Macro-F1 gain across M1–M4: **$+0.0054$**.
+  - Any model dropped $>$ fold SD: **False** (all 4 models achieved positive gains).
+  - Decision: **`USE_ENGINEERED = True` is officially ADOPTED**.
+- **Why It Matters:**
+  - This decision strictly honors the pre-registered protocol rather than post-hoc cherry-picking.
+  - Row-wise domain features (`log_src_bytes`, `bytes_ratio`, `content_activity`, `privilege_flag`) enrich representations for both linear boundaries and orthogonal tree splits without introducing data leakage.
+
+#### Finding 38: Frozen Global Settings
+- **What:**
+  - `USE_CLASS_WEIGHT = True` (protects rare-class recall across U2R and R2L).
+  - `USE_ENGINEERED = True` (adopted via pre-registered positive empirical gains across all models).
+- **Why It Matters:**
+  - All four baseline models (M1–M4) were re-evaluated and re-saved under these frozen settings.
+  - These exact settings are locked in `src/config.py` for all subsequent phases (tuning, repeated cross-validation, threshold calibration, and test evaluation), guaranteeing absolute consistency and preventing configuration drift.
+- **Artifacts Generated:**
+  - Class weight ablation metrics: `reports/metrics/ablation_class_weight.csv`
+  - Feature engineering ablation metrics: `reports/metrics/ablation_engineered.csv`
+  - Updated baseline fold results and out-of-fold predictions: `cv_results_{model}.csv` and `oof_{model}.npz` for M1–M4.

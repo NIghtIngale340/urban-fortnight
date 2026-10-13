@@ -618,12 +618,12 @@ This log records our actual development journey, empirical observations, failure
     - Selected $\tau^* = \mathbf{0.002002}$ (frozen as `ALERT_TAU` in `src/config.py`).
     - At $\tau = 0.002002$:
       - $\text{FPR} = \mathbf{0.0911\%}$ (strictly $\le 0.1\%$, corresponding to only **$91.1$ false alarms per 100,000 Normal connections**).
-      - $\text{FNR} = 0.4437\%$.
+      - $\text{FNR} = \mathbf{0.0195\%}$ ($0.000195$, only 9 missed attacks out of 46,204 total attacks in train OOF).
       - **Macro-F1:** $0.9477$.
       - **R2L Recall:** $\mathbf{98.87\%}$ ($790 / 799$ detected; only 9 misses vs. 14 misses at $\tau=0.5$).
-      - **U2R Recall:** $\mathbf{90.48\%}$ ($38 / 42$ detected; misses cut in half from 8 down to 4!).
-      - **Combined Rare Recall:** $\mathbf{189.35\%}$ (a $+9.38$ percentage point surge over default argmax).
-- **Why It Matters:** Calibrating $\tau$ down to $0.002002$ shifts the operational operating point from passive classification to aggressive perimeter defense: any connection with $> 0.2\%$ probability of attack triggers an alert, doubling U2R sensitivity while generating fewer than 1 false alarm per 1,000 normal connections.
+      - **U2R Recall:** $\mathbf{90.48\%}$ ($38 / 42$ detected; misses cut from 7 at $\tau=0.5$ down to 4, or from 8 misses under plain argmax).
+      - **Combined Rare Recall:** $\mathbf{189.35\%}$ (a like-for-like $+7.77$ percentage point improvement over the $\tau=0.5$ baseline of $181.58\%$, or $+10.15$ percentage points over plain argmax at $179.20\%$).
+- **Why It Matters:** Calibrating $\tau$ down to $0.002002$ shifts the operational operating point from passive classification to aggressive perimeter defense: any connection with $> 0.2\%$ probability of attack triggers an alert, boosting U2R sensitivity to $90.48\%$ while maintaining an empirical training OOF false alarm rate of fewer than 1 per 1,000 normal connections ($0.0911\%$).
 
 #### Finding 48: Permutation Importance vs. Aggregated MDI Importance
 - **What:**
@@ -673,20 +673,22 @@ This log records our actual development journey, empirical observations, failure
     - `M3_rf`: Train $= 0.9915$, CV $= 0.9535$, Test $= 0.9591$ (Test–CV gap: $+0.0056$).
     - `M4_lgbm`: Train $= 1.0000$, CV $= 0.9606$, Test $= \mathbf{0.9543}$ (Test–CV gap: $\mathbf{-0.0063}$).
   - All confusion matrix row sums were formally verified against true test class counts (`Normal`: 17,567; `DoS`: 10,914; `Probe`: 426; `R2L`: 200; `U2R`: 10).
-- **Why It Matters:** Across all five architectures, the generalization gap between 15-fold cross-validation and the locked test set is strictly below $0.7$ percentage points ($|\text{Gap}| \le 0.0063$). This definitively proves that the preprocessing, feature engineering, and hyperparameter tuning pipelines operated with zero data leakage.
+- **Why It Matters:** Across all five architectures, the generalization gap between 15-fold cross-validation and the locked test set is strictly below $0.7$ percentage points ($|\text{Gap}| \le 0.0063$). This close agreement is consistent with solid generalization within the KDD Cup 1999 benchmark distribution. Note that small performance gaps alone are not mathematical proof of zero data leakage (since shared leakages could artificially inflate both splits); rather, definitive leakage prevention is guaranteed by the structural integrity verification conducted in Phase 5: disjoint train/test index sets, full partition coverage, zero identical feature row overlap across splits (`row_overlap(X_train, X_test) == 0`), and strict fit-transform separation within the pipeline.
 
-#### Finding 51: Operational Policy Performance on Held-Out Test Data
+#### Finding 51: Operational Policy Performance and Trade-Offs on Held-Out Test Data
 - **What:**
-  - Contrasted default argmax vs. calibrated operational threshold ($\tau = 0.002002$) for the champion LightGBM model on test data:
-    - **Rare Attack Detection:**
+  - Evaluated both standard argmax and the calibrated operational threshold ($\tau = 0.002002$) for the champion LightGBM model on the locked test data ($N=29,117$):
+    - **Detection Benefits (Attack Sensitivity):**
       - **U2R Recall:** $90.0\%$ ($9 / 10$ detected; Wilson 95% CI: $[59.6\%, 98.2\%]$) under both policies.
       - **R2L Recall:** $99.0\%$ ($198 / 200$ detected; Wilson 95% CI: $[96.4\%, 99.7\%]$) under both policies.
-    - **False Positive Rate (Normal Traffic, $N=17,567$):**
-      - Argmax: $7$ false alarms ($0.0398\%$, Wilson 95% CI: $[0.0193\%, 0.0822\%]$).
-      - Calibrated $\tau = 0.002002$: $19$ false alarms ($0.1082\%$, Wilson 95% CI: $[0.0693\%, 0.1689\%]$).
-    - **False Negative Rate (Missed Attacks, $N=11,550$):**
-      - Calibrated $\tau$ cuts total missed attacks by $60\%$ (dropping FNR from $0.0433\%$ [5 missed attacks] down to $0.0173\%$ [only 2 missed attacks!]).
-- **Why It Matters:** Operational threshold calibration decouples sensitivity from taxonomy: security teams incur merely $12$ additional alerts across $17,567$ normal connections in exchange for eliminating $60\%$ of missed network intrusions.
+      - **False Negative Rate (Missed Attacks, $N=11,550$):** Reduced from $0.0433\%$ ($5$ missed attacks under argmax) down to $0.0173\%$ ($2$ missed attacks under $\tau$), eliminating $60\%$ of missed intrusions.
+    - **Operational Costs and Trade-Offs:**
+      - **Multiclass Macro-F1:** Decreases from $0.9543$ (argmax) to $0.9201$ ($\tau$), reflecting trade-offs in per-class balance.
+      - **U2R Precision:** Decreases from $0.6923$ ($\approx 0.69$, 9/13) to $0.4737$ ($\approx 0.47$, 9/19), as a lower alert threshold increases false positive assignments to minority classes.
+      - **False Alarm Rate (Normal Traffic, $N=17,567$):** Increases from $0.0398\%$ ($7$ false alarms, Wilson 95% CI: $[0.0193\%, 0.0822\%]$) to $0.1082\%$ ($19$ false alarms, Wilson 95% CI: $[0.0693\%, 0.1689\%]$).
+      - **FPR Target vs Operational Ceiling:** On the test set, the observed FPR of $0.1082\%$ slightly exceeds the strict $0.10\%$ training OOF target (by $0.0082$ percentage points, representing just $1.5$ additional false alarms beyond the expected 17.5 out of 17,567 due to binomial sampling variation), while remaining well below the broader $0.50\%$ operational ceiling.
+  - In accordance with methodological protocols, the threshold was calibrated strictly on training OOF data and was **not** retuned post-hoc using these test results.
+- **Why It Matters:** Applying the operational threshold significantly improves the binary intrusion detection trade-off by cutting missed attacks by 60%, but operators must accept real trade-offs: lower multiclass Macro-F1, diluted U2R precision, and a slight elevation above the strict 0.1% false alarm target on unseen test traffic.
 
 #### Finding 52: Scientific Qualification & Deployment Realism (Methodological Rigor)
 - **What:**

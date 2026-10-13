@@ -16,7 +16,9 @@ Developed for **CCINSYSL (Introduction to Intelligent Systems)** course project.
 │   ├── raw/                       # Raw metadata and dataset reference (kddcup.names.txt, etc.)
 │   └── processed/                 # Generated indices and processed metadata
 ├── notebooks/                     # Jupyter notebooks (01 to 05)
-├── src/                           # Core modular Python packages
+├── src/                           # Core modular Python packages (predict.py = production inference)
+├── scripts/train_final.py         # Builds models/final_pipeline.joblib + model_card.json
+├── tests/                         # unittest suite for the final pipeline and inference
 ├── models/                        # Serialized model pipelines and model card
 ├── reports/
 │   ├── metrics/                   # Evaluation tables (CSV / JSON)
@@ -43,6 +45,25 @@ uv venv .venv --python 3.12
 source .venv/bin/activate
 uv pip install -r requirements.txt
 ```
+
+---
+
+## Final Model, Inference & Tests
+
+Run from the project root with the virtual environment active. Requires `data/raw/kddcup.csv` and the frozen Phase 17–19 outputs in `models/` and `reports/metrics/`.
+
+```bash
+# Re-fit the selected pipeline (M4 LightGBM, default config) on all TRAIN rows -> models/final_pipeline.joblib + models/model_card.json
+python scripts/train_final.py
+
+# Score one record (JSON object) or a batch (JSON list of objects)
+python -m src.predict tests/example_record.json
+
+# Tests for the artifact and src/predict.py
+python -m unittest discover -s tests -v
+```
+
+`train_final.py` never loads the locked test set; test metrics in the model card are copied from the Phase 19 outputs (`reports/metrics/test_results.json`). Alert rule: `attack_score = 1 - P(Normal)`; alert when `attack_score >= ALERT_TAU` (0.002002, `src/config.py`), family = most probable attack class.
 
 ---
 

@@ -1,0 +1,426 @@
+{
+  "model_name": "Network Guardian IDS - final pipeline",
+  "created_utc": "2026-10-13T15:38:09.746491+00:00",
+  "artifact": {
+    "path": "models/final_pipeline.joblib",
+    "build_command": "python scripts/train_final.py",
+    "inference_module": "src/predict.py"
+  },
+  "architecture": {
+    "model_id": "M4_lgbm",
+    "estimator": "LGBMClassifier",
+    "pipeline_steps": [
+      "features",
+      "pre",
+      "clf"
+    ],
+    "config": "default",
+    "hyperparameters": {
+      "boosting_type": "gbdt",
+      "class_weight": "balanced",
+      "colsample_bytree": 0.8,
+      "importance_type": "split",
+      "learning_rate": 0.05,
+      "max_depth": -1,
+      "min_child_samples": 10,
+      "min_child_weight": 0.001,
+      "min_split_gain": 0.0,
+      "n_estimators": 300,
+      "n_jobs": -1,
+      "num_leaves": 31,
+      "objective": null,
+      "random_state": 42,
+      "reg_alpha": 0.0,
+      "reg_lambda": 0.0,
+      "subsample": 0.8,
+      "subsample_for_bin": 200000,
+      "subsample_freq": 1,
+      "deterministic": true,
+      "force_row_wise": true,
+      "verbose": -1
+    }
+  },
+  "selection": {
+    "rule": "Phase 13/17 pre-registered: FPR gate (<=0.5% mean CV FPR) -> rank by mean macro-F1 -> if top-2 gap < pooled fold SD, tie-break (a) R2L+U2R recall, (b) lower FPR, (c) speed. Tuned replaces default only if it wins >=12/15 paired folds.",
+    "decision": {
+      "winner": "M4_lgbm",
+      "step": "tie-break (a) R2L+U2R recall",
+      "runner_up": "M3_rf",
+      "gap": 0.0070846507241731915,
+      "pooled_sd": 0.01454328922442585,
+      "discarded": [
+        "M1_logreg"
+      ],
+      "chosen_config": {
+        "M0_dummy": "default",
+        "M1_logreg": "tuned",
+        "M2_tree": "default",
+        "M3_rf": "default",
+        "M4_lgbm": "default"
+      },
+      "timestamp": "2026-10-13T21:32:34.094356"
+    }
+  },
+  "frozen_settings": {
+    "USE_CLASS_WEIGHT": true,
+    "USE_ENGINEERED": true,
+    "SEED": 42,
+    "ALERT_TAU": 0.002002
+  },
+  "input_schema": {
+    "required_fields": [
+      "duration",
+      "protocol_type",
+      "service",
+      "flag",
+      "src_bytes",
+      "dst_bytes",
+      "land",
+      "wrong_fragment",
+      "urgent",
+      "hot",
+      "num_failed_logins",
+      "logged_in",
+      "num_compromised",
+      "root_shell",
+      "su_attempted",
+      "num_root",
+      "num_file_creations",
+      "num_shells",
+      "num_access_files",
+      "is_guest_login",
+      "count",
+      "srv_count",
+      "serror_rate",
+      "srv_serror_rate",
+      "rerror_rate",
+      "srv_rerror_rate",
+      "same_srv_rate",
+      "diff_srv_rate",
+      "srv_diff_host_rate",
+      "dst_host_count",
+      "dst_host_srv_count",
+      "dst_host_same_srv_rate",
+      "dst_host_diff_srv_rate",
+      "dst_host_same_src_port_rate",
+      "dst_host_srv_diff_host_rate",
+      "dst_host_serror_rate",
+      "dst_host_srv_serror_rate",
+      "dst_host_rerror_rate",
+      "dst_host_srv_rerror_rate"
+    ],
+    "categorical_fields": {
+      "protocol_type": [
+        "icmp",
+        "tcp",
+        "udp"
+      ],
+      "service": [
+        "IRC",
+        "X11",
+        "Z39_50",
+        "auth",
+        "bgp",
+        "courier",
+        "csnet_ns",
+        "ctf",
+        "daytime",
+        "discard",
+        "domain",
+        "domain_u",
+        "echo",
+        "eco_i",
+        "ecr_i",
+        "efs",
+        "exec",
+        "finger",
+        "ftp",
+        "ftp_data",
+        "gopher",
+        "hostnames",
+        "http",
+        "http_443",
+        "imap4",
+        "iso_tsap",
+        "klogin",
+        "kshell",
+        "ldap",
+        "link",
+        "login",
+        "mtp",
+        "name",
+        "netbios_dgm",
+        "netbios_ns",
+        "netbios_ssn",
+        "netstat",
+        "nnsp",
+        "nntp",
+        "ntp_u",
+        "other",
+        "pm_dump",
+        "pop_2",
+        "pop_3",
+        "printer",
+        "private",
+        "red_i",
+        "remote_job",
+        "rje",
+        "shell",
+        "smtp",
+        "sql_net",
+        "ssh",
+        "sunrpc",
+        "supdup",
+        "systat",
+        "telnet",
+        "tim_i",
+        "time",
+        "urh_i",
+        "urp_i",
+        "uucp",
+        "uucp_path",
+        "vmnet",
+        "whois"
+      ],
+      "flag": [
+        "OTH",
+        "REJ",
+        "RSTO",
+        "RSTOS0",
+        "RSTR",
+        "S0",
+        "S1",
+        "S2",
+        "S3",
+        "SF",
+        "SH"
+      ]
+    },
+    "numeric_fields": "all other required fields; finite and >= 0",
+    "ignored_fields": [
+      "num_outbound_cmds",
+      "is_host_login",
+      "any other extra field"
+    ],
+    "unseen_categories": "encoded as all-zeros (OneHotEncoder handle_unknown='ignore'); reported per row by src.predict"
+  },
+  "preprocessing": {
+    "engineered_features": {
+      "bytes_ratio": "log1p(src_bytes) - log1p(dst_bytes)",
+      "zero_payload": "1 if src_bytes == 0 and dst_bytes == 0",
+      "content_activity": "sum of hot, num_failed_logins, num_compromised, num_root, num_file_creations, num_shells, num_access_files",
+      "privilege_flag": "1 if root_shell > 0 or su_attempted > 0 or num_root > 0"
+    },
+    "column_transformer": "one-hot(protocol_type, service, flag); binary/numeric passthrough (tree model, no scaling)",
+    "n_model_features": 119,
+    "engineered_cols": [
+      "bytes_ratio",
+      "zero_payload",
+      "content_activity",
+      "privilege_flag"
+    ]
+  },
+  "classes": {
+    "family_order": [
+      "Normal",
+      "DoS",
+      "Probe",
+      "R2L",
+      "U2R"
+    ],
+    "estimator_classes_": [
+      "DoS",
+      "Normal",
+      "Probe",
+      "R2L",
+      "U2R"
+    ]
+  },
+  "decision_policy": {
+    "attack_score": "1 - P(Normal)",
+    "rule": "attack_score < tau -> no alert (Normal); attack_score >= tau -> alert, family = argmax over DoS/Probe/R2L/U2R",
+    "tau": 0.002002,
+    "tau_selection": "Phase 18: lowest tau on a 1000-point grid with OOF FPR <= 0.1% (5x margin under the 0.5% gate); chosen on train OOF only",
+    "oof_at_tau": {
+      "fpr": 0.0009108505066605,
+      "fnr": 0.0001947967620449,
+      "macro_f1": 0.94771219141684,
+      "recall_R2L": 0.9887359198998747,
+      "recall_U2R": 0.9047619047619048
+    }
+  },
+  "training_data": {
+    "dataset": "KDD Cup 1999 10% (kddcup.csv), deduplicated, conflicts removed",
+    "raw_sha256": "f8c8267ebcd9c0ed1fd7d6277fe5bfff8732e9b7db8e61b873542b2a534b6f9a",
+    "n_train": 116466,
+    "train_class_counts": {
+      "Normal": 70264,
+      "DoS": 43657,
+      "Probe": 1704,
+      "R2L": 799,
+      "U2R": 42
+    }
+  },
+  "cross_validation": {
+    "protocol": "5x3 repeated stratified CV on train (Phase 17)",
+    "macro_f1_mean": 0.9606042860724748,
+    "macro_f1_sd": 0.015472215399353,
+    "fpr_mean": 0.000256176097527,
+    "fnr_mean": 0.0005411005567914,
+    "recall_Normal_mean": 0.9997438239024732,
+    "recall_DoS_mean": 0.9999160107170916,
+    "recall_Probe_mean": 0.9951095394169396,
+    "recall_R2L_mean": 0.9820597484276732,
+    "recall_U2R_mean": 0.8175925925925928,
+    "recall_R2L_sd": 0.0084803012307905,
+    "recall_U2R_sd": 0.0767697336500727
+  },
+  "held_out_test": {
+    "source": "reports/metrics/test_results.json (Phase 19, single evaluation, frozen)",
+    "evaluated_at": "Test evaluated on 2026-10-13T23:04:36.788167",
+    "class_support": {
+      "Normal": 17567,
+      "DoS": 10914,
+      "Probe": 426,
+      "R2L": 200,
+      "U2R": 10
+    },
+    "argmax": {
+      "metrics": {
+        "accuracy": 0.9995535254318783,
+        "macro_f1": 0.9542549886770434,
+        "weighted_f1": 0.9995644425647789,
+        "balanced_acc": 0.9765118544133247,
+        "precision_Normal": 0.999715343011671,
+        "precision_DoS": 0.9998167827042873,
+        "precision_Probe": 0.9952941176470588,
+        "precision_R2L": 1.0,
+        "precision_U2R": 0.6923076923076923,
+        "recall_Normal": 0.9996015255877497,
+        "recall_DoS": 1.0,
+        "recall_Probe": 0.9929577464788732,
+        "recall_R2L": 0.99,
+        "recall_U2R": 0.9,
+        "f1_Normal": 0.9996584310600023,
+        "f1_DoS": 0.9999083829592305,
+        "f1_Probe": 0.9941245593419507,
+        "f1_R2L": 0.9949748743718593,
+        "f1_U2R": 0.782608695652174,
+        "fpr": 0.0003984744122502419,
+        "fnr": 0.0004329004329004329
+      },
+      "rare_class_uncertainty": {
+        "recall_U2R": {
+          "k": 9,
+          "n": 10,
+          "recall": 0.9,
+          "wilson95": [
+            0.5958499732047615,
+            0.9821237869049271
+          ]
+        },
+        "recall_R2L": {
+          "k": 198,
+          "n": 200,
+          "recall": 0.99,
+          "wilson95": [
+            0.9642782382838232,
+            0.9972533418664556
+          ]
+        },
+        "fpr": {
+          "false_alarms": 7,
+          "n_normal": 17567,
+          "fpr": 0.0003984744122502419,
+          "wilson95": [
+            0.00019303758272812944,
+            0.0008223639199550319
+          ]
+        }
+      }
+    },
+    "tau_policy": {
+      "metrics": {
+        "accuracy": 0.9992100834564001,
+        "macro_f1": 0.9200952122426947,
+        "weighted_f1": 0.9992692335329173,
+        "balanced_acc": 0.977314201750989,
+        "precision_Normal": 0.9998860398860399,
+        "precision_DoS": 0.9997251992305578,
+        "precision_Probe": 0.9883720930232558,
+        "precision_R2L": 0.9850746268656716,
+        "precision_U2R": 0.47368421052631576,
+        "recall_Normal": 0.9989184265953208,
+        "recall_DoS": 1.0,
+        "recall_Probe": 0.9976525821596244,
+        "recall_R2L": 0.99,
+        "recall_U2R": 0.9,
+        "f1_Normal": 0.9994019990318079,
+        "f1_DoS": 0.9998625807338188,
+        "f1_Probe": 0.9929906542056075,
+        "f1_R2L": 0.9875311720698254,
+        "f1_U2R": 0.6206896551724138,
+        "fpr": 0.001081573404679228,
+        "fnr": 0.00017316017316017316
+      },
+      "rare_class_uncertainty": {
+        "recall_U2R": {
+          "k": 9,
+          "n": 10,
+          "recall": 0.9,
+          "wilson95": [
+            0.5958499732047615,
+            0.9821237869049271
+          ]
+        },
+        "recall_R2L": {
+          "k": 198,
+          "n": 200,
+          "recall": 0.99,
+          "wilson95": [
+            0.9642782382838232,
+            0.9972533418664556
+          ]
+        },
+        "fpr": {
+          "false_alarms": 19,
+          "n_normal": 17567,
+          "fpr": 0.001081573404679228,
+          "wilson95": [
+            0.0006925509167392575,
+            0.0016887498831543867
+          ]
+        }
+      }
+    }
+  },
+  "timing": {
+    "final_fit_seconds": 12.4,
+    "train_set_predict_ms_per_1k_rows": 13.374,
+    "cv_fit_seconds_mean": 10.4945120294006,
+    "cv_predict_seconds_per_1k_mean": 0.0123944082532034,
+    "machine": "Linux-7.1.13+parrot7-amd64-x86_64-with-glibc2.41"
+  },
+  "reproducibility_check": {
+    "train_macro_f1_this_fit": 1.0,
+    "train_macro_f1_phase19": 1.0,
+    "match": true
+  },
+  "limitations": [
+    "Benchmark result on KDD Cup 1999 (1998 simulated traffic); not a guarantee of real-world security.",
+    "No zero-day or concept-drift evaluation: attack types absent from training are not covered.",
+    "U2R has 42 training and 10 test rows; its recall CI is wide (see held_out_test).",
+    "Probabilities come from a class-weighted model and are not calibrated; attack_score is a ranking score.",
+    "tau=0.002002 trades false alarms for recall: on test, FPR 0.040% (argmax) -> 0.108% (tau), FNR 0.0433% -> 0.0173%, macro-F1 0.954 -> 0.920, U2R precision 0.69 -> 0.47. The 0.1% FPR target was set on train OOF; check the test FPR above against it.",
+    "Unseen categorical values are silently zero-encoded by the model; src.predict reports them.",
+    "Single model, single machine timing; not load-tested."
+  ],
+  "software": {
+    "python": "3.12.14",
+    "scikit-learn": "1.9.1",
+    "lightgbm": "4.7.0",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "joblib": "1.6.0"
+  }
+}

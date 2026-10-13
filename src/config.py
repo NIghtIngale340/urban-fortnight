@@ -24,6 +24,12 @@ SEED = 42
 LABEL_COL = "label"
 FAMILY_COL = "family"
 
+
+# The operational decision threshold (decided in Phase 18 from OOF probabilities)
+ALERT_TAU = 0.002002  # Frozen in Phase 18 (operational FPR <= 0.1% ceiling)
+
+
+
 FEATURE_NAMES: list[str] = [
     "duration", "protocol_type", "service", "flag", "src_bytes",
     "dst_bytes", "land", "wrong_fragment", "urgent", "hot",

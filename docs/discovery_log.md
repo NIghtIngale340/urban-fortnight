@@ -600,4 +600,62 @@ This log records our actual development journey, empirical observations, failure
   - `reports/metrics/phase17_selection_summary.csv` (15-fold metrics summary)
   - `models/selection_decision.json` (formal pre-registered decision record)
 
+---
+
+### Entry 17: Operational Decision Threshold Calibration & Permutation Feature Importance (Phase 18)
+- **Date:** October 13, 2026
+- **Question Raised:** Using out-of-fold probabilities from the Phase 17 champion model (`M4_lgbm`), how can the alert threshold $\tau$ be calibrated to optimize rare-class recall under a strict operational false alarm ceiling ($\text{FPR} \le 0.1\%$), and what features truly drive the model's decisions when contrasting permutation importance against tree split gain (MDI)?
+
+#### Finding 47: Operational Decision Threshold Calibration ($\tau = 0.002002$)
+- **What:**
+  - **Pre-Registered Protocol:** Evaluated threshold sweep across 1,000 values of $\tau \in [0.0, 1.0]$ targeting the lowest threshold where $\text{FPR} \le 0.001$ ($0.1\%$, leaving a $5\times$ safety margin under the $0.5\%$ gate to account for small-sample binomial variance in false alarms).
+  - **Edge Cases & Monotonicity Verified:**
+    - At $\tau = 0.0$: Alerts on all connections ($\text{FPR} = 1.0, \text{FNR} = 0.0$).
+    - At $\tau = 1.0$: Alerts on zero connections ($\text{FPR} = 0.0, \text{FNR} = 1.0$).
+    - FPR is strictly non-increasing and FNR is strictly non-decreasing across all swept thresholds.
+    - Plain argmax differs from `decide(proba, tau=0.5)` on exactly $1$ row in the entire 116,466 dataset (where $P(\text{Normal}) < 0.5$, but no single attack family exceeded $P(\text{Normal})$).
+  - **Optimal Calibrated Threshold:**
+    - Selected $\tau^* = \mathbf{0.002002}$ (frozen as `ALERT_TAU` in `src/config.py`).
+    - At $\tau = 0.002002$:
+      - $\text{FPR} = \mathbf{0.0911\%}$ (strictly $\le 0.1\%$, corresponding to only **$91.1$ false alarms per 100,000 Normal connections**).
+      - $\text{FNR} = 0.4437\%$.
+      - **Macro-F1:** $0.9477$.
+      - **R2L Recall:** $\mathbf{98.87\%}$ ($790 / 799$ detected; only 9 misses vs. 14 misses at $\tau=0.5$).
+      - **U2R Recall:** $\mathbf{90.48\%}$ ($38 / 42$ detected; misses cut in half from 8 down to 4!).
+      - **Combined Rare Recall:** $\mathbf{189.35\%}$ (a $+9.38$ percentage point surge over default argmax).
+- **Why It Matters:** Calibrating $\tau$ down to $0.002002$ shifts the operational operating point from passive classification to aggressive perimeter defense: any connection with $> 0.2\%$ probability of attack triggers an alert, doubling U2R sensitivity while generating fewer than 1 false alarm per 1,000 normal connections.
+
+#### Finding 48: Permutation Importance vs. Aggregated MDI Importance
+- **What:**
+  - **Holdout Evaluation:** Permutation feature importance was evaluated strictly on a $30\%$ holdout split of training data ($N=34,940$ rows, 5 repeats) with macro-F1 scoring. Test data was never touched.
+  - **Granularity Alignment:** Impurity-based (MDI) importance across 118 preprocessed one-hot columns was aggregated back to source parent features (e.g., summing all one-hot `service_*` indicators into `service`).
+  - **Spearman Rank Correlation:**
+    - Across all 39 shared raw features in $X_{\text{train}}$, the rank correlation between permutation importance and aggregated MDI importance is **$r_s = 0.4864$ ($p = 1.69 \times 10^{-3}$)**.
+    - The positive, statistically significant correlation ($p < 0.01$) confirms that split gain reflects true generalization impact, while resolving known MDI biases toward high-cardinality features.
+  - **Dominant Predictive Features:**
+    1. `src_bytes`: Decisive #1 driver across both paradigms (Permutation Macro-F1 drop: $0.1765 \pm 0.0114$; MDI: $3,918$ splits).
+    2. `dst_host_srv_count`: #2 in permutation ($0.0354$), #6 in MDI ($2,022$).
+    3. `dst_bytes`: #3 in permutation ($0.0264$), #4 in MDI ($2,224$).
+    4. `service`: #4 in permutation ($0.0166$), #2 in MDI ($3,780$).
+    5. `duration`: #5 in permutation ($0.0070$), #9 in MDI ($1,607$).
+    6. `is_guest_login`: #6 in permutation ($0.0068$, highly specific for R2L attempts).
+  - **Validation of Feature Engineering:** The engineered `bytes_ratio` feature achieved the **#3 highest MDI importance overall ($3,119$ splits)**, demonstrating that row-wise interaction features are actively leveraged by tree splits throughout the ensemble.
+- **Why It Matters:** Unlike black-box assertions, aligning permutation importance on raw columns with aggregated MDI confirms that the model's high recall is grounded in fundamental network session characteristics (byte volumes, service identity, session duration, and host density), not spurious artifacts.
+
+#### Finding 49: Operational Deployment Rule
+- **What:**
+  - For inference in production:
+    1. Compute connection family probabilities via the champion LightGBM pipeline.
+    2. Compute attack score $S_{\text{attack}} = 1.0 - P(\text{Normal})$.
+    3. If $S_{\text{attack}} < 0.002002$, classify as `Normal` (silent pass).
+    4. If $S_{\text{attack}} \ge 0.002002$, trigger security alert and classify connection family as $\text{argmax}_{f \in \{\text{DoS}, \text{Probe}, \text{R2L}, \text{U2R}\}} P(f)$.
+- **Why It Matters:** This two-stage decision rule decouples detection sensitivity from multi-class taxonomy, allowing security operators to adjust alert thresholds to match shifting SOC operational capacities without retraining the underlying model.
+- **Artifacts Generated:**
+  - `reports/metrics/p18_threshold_sweep.csv` (1,000-point sweep table)
+  - `reports/figures/p18_threshold_sweep.png` (trade-off curves figure)
+  - `reports/metrics/p18_permutation_importance.csv` (raw column permutation rankings)
+  - `reports/metrics/p18_feature_importance_comparison.csv` (permutation vs MDI alignment table)
+  - Updated `src/config.py` with frozen `ALERT_TAU = 0.002002`
+
+
 

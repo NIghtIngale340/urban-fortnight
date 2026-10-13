@@ -265,3 +265,99 @@ def apply_selection_rule(summary: pd.DataFrame, fpr_limit: float = 0.005) -> dic
     w = top if top["total_time"] < second["total_time"] else second
     return {"winner": w["model"], "step": "tie-break (c) speed",
             "runner_up": (second if w is top else top)["model"], **base}
+
+
+
+def attack_score(proba: np.ndarray) -> np.ndarray:
+    normal_idx = FAMILIES.index("Normal")
+    return 1.0 - proba[:, normal_idx]
+
+
+def decide(proba: np.ndarray, tau: float) -> np.ndarray:
+    """Decide family based on threshold tau.
+    If attack_score < tau -> 'Normal' (no alert).
+    Else -> argmax over the four attack columns.
+    """
+
+    scores = attack_score(proba)
+    preds = np.full(len(scores), "Normal", dtype=object)
+
+
+    attack_mask = scores >= tau
+    if attack_mask.any():
+        attack_families = [f for f in FAMILIES if f != "Normal"]
+        normal_idx = FAMILIES.index("Normal")
+        attack_cols = [i for i in range(len(FAMILIES)) if i != normal_idx]
+        attack_proba = proba[attack_mask][:, attack_cols]
+        preds[attack_mask] = np.array(attack_families)[np.argmax(attack_proba, axis=1)]
+    return preds
+
+def threshold_sweep(y_true, proba, taus) -> pd.DataFrame:
+    """Sweep taus and compute metrics. y_true must be family labels."""
+    y_true_arr = np.asarray(y_true)
+    y_true_int = np.array([FAMILIES.index(f) for f in y_true_arr])
+    n_normal = int((y_true_arr == "Normal").sum())
+    normal_idx = FAMILIES.index("Normal")
+
+    scores = attack_score(proba)
+    attack_cols = [i for i in range(len(FAMILIES)) if i != normal_idx]
+    best_attack_idx = np.array(attack_cols)[np.argmax(proba[:, attack_cols], axis=1)]
+
+    rows = []
+    for tau in taus:
+        y_pred_int = np.where(scores >= tau, best_attack_idx, normal_idx)
+
+        # Fast 5x5 confusion matrix via bincount
+        cm = np.bincount(y_true_int * 5 + y_pred_int, minlength=25).reshape(5, 5)
+        tp = np.diag(cm)
+        pred_pos = cm.sum(axis=0)
+        act_pos = cm.sum(axis=1)
+
+        p = np.divide(tp, pred_pos, out=np.zeros(5, dtype=float), where=pred_pos > 0)
+        r = np.divide(tp, act_pos, out=np.zeros(5, dtype=float), where=act_pos > 0)
+        denom = p + r
+        f = np.divide(2 * p * r, denom, out=np.zeros(5, dtype=float), where=denom > 0)
+
+        acc = float(tp.sum() / cm.sum())
+        macro_f1 = float(np.mean(f))
+        weighted_f1 = float(np.sum(f * act_pos) / cm.sum())
+
+        # Binary FPR / FNR
+        n_fp = int(cm[normal_idx].sum() - cm[normal_idx, normal_idx])
+        fpr = float(n_fp / n_normal) if n_normal else 0.0
+
+        n_attack = int(cm.sum() - cm[normal_idx].sum())
+        n_fn = int(cm[:, normal_idx].sum() - cm[normal_idx, normal_idx])
+        fnr = float(n_fn / n_attack) if n_attack else 0.0
+
+        fp_per_100k = (n_fp / n_normal) * 100000 if n_normal > 0 else 0.0
+
+        row = {
+            "tau": float(tau),
+            "fp_per_100k_normal": fp_per_100k,
+            "accuracy": acc,
+            "macro_f1": macro_f1,
+            "weighted_f1": weighted_f1,
+            "balanced_acc": float(np.mean(r)),
+        }
+        for i, lbl in enumerate(FAMILIES):
+            row[f"precision_{lbl}"] = float(p[i])
+            row[f"recall_{lbl}"] = float(r[i])
+            row[f"f1_{lbl}"] = float(f[i])
+
+        row["fpr"] = fpr
+        row["fnr"] = fnr
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def choose_tau(sweep: pd.DataFrame, fpr_max: float = 0.001) -> float:
+    """Pick the LOWEST tau whose FPR is <= fpr_max.
+    We target 0.1% (0.001) to leave a 5x margin under the 0.5% operational ceiling,
+    because FPR estimates from ~20 false alarms are noisy.
+    Lowest tau = most alerts = highest recall, while staying safe.
+    """
+    valid = sweep[sweep["fpr"] <= fpr_max]
+    if valid.empty:
+        raise ValueError(f"No tau found with FPR <= {fpr_max}. Max tau FPR is {sweep['fpr'].min():.5f}")
+    return float(valid["tau"].min())

@@ -16,6 +16,9 @@ from scipy.stats import binomtest
 
 from sklearn.model_selection import StratifiedKFold
 
+from sklearn.model_selection import RepeatedStratifiedKFold
+from scipy.stats import binomtest
+
 
 
 def get_cv(n_splits: int = 5, seed: int = SEED) -> StratifiedKFold:
@@ -59,50 +62,43 @@ def _reorder_proba_to_families(proba, classes):
     return out
 
 
-def evaluate_cv(pipeline, X, y, cv) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
-    """Run CV. Returns (fold_df, oof_pred, oof_proba). Pass TRAIN data only.
+# Replace your evaluate_cv signature/body with this (adds return_oof):
+def evaluate_cv(pipeline, X, y, cv, return_oof: bool = True):
+    """Run CV. Returns (fold_df, oof_pred, oof_proba) if return_oof else fold_df.
 
-    oof_pred : (n,) array of predicted family labels
-    oof_proba: (n, 5) array, columns reordered into FAMILIES order
+    Use return_oof=False for repeated CV (a row would otherwise get several OOF
+    predictions). Pass TRAIN data only.
     """
     fold_rows = []
-    oof_pred = np.full(len(y), None, dtype=object)
-    oof_proba = np.full((len(y), len(FAMILIES)), np.nan)
+    if return_oof:
+        oof_pred = np.full(len(y), None, dtype=object)
+        oof_proba = np.full((len(y), len(FAMILIES)), np.nan)
 
     for fold_i, (tr_idx, va_idx) in enumerate(cv.split(X, y)):
         X_tr, X_va = X.iloc[tr_idx], X.iloc[va_idx]
         y_tr, y_va = y.iloc[tr_idx], y.iloc[va_idx]
-
         est = clone(pipeline)
+        t0 = time.perf_counter(); est.fit(X_tr, y_tr); fit_time = time.perf_counter() - t0
+        t0 = time.perf_counter(); y_pred = est.predict(X_va); pred_time = time.perf_counter() - t0
 
-        t0 = time.perf_counter()
-        est.fit(X_tr, y_tr)
-        fit_time = time.perf_counter() - t0
-
-        t0 = time.perf_counter()
-        y_pred = est.predict(X_va)
-        pred_time = time.perf_counter() - t0
-        pred_time_per_1k = pred_time / len(y_va) * 1000.0
-
-        proba = est.predict_proba(X_va)
-        proba = _reorder_proba_to_families(proba, est.named_steps["clf"].classes_)
-
-        row = {
-            "fold": fold_i,
-            "fit_time": fit_time,
-            "predict_time_per_1k": pred_time_per_1k,
-        }
+        row = {"fold": fold_i, "fit_time": fit_time,
+               "predict_time_per_1k": pred_time / len(y_va) * 1000.0}
         row.update(multiclass_metrics(y_va, y_pred, labels=FAMILIES))
         row.update(binary_view(y_va, y_pred))
         fold_rows.append(row)
 
-        oof_pred[va_idx] = y_pred
-        oof_proba[va_idx] = proba
+        if return_oof:
+            proba = _reorder_proba_to_families(est.predict_proba(X_va),
+                                               est.named_steps["clf"].classes_)
+            oof_pred[va_idx] = y_pred
+            oof_proba[va_idx] = proba
 
-    assert not np.isnan(oof_proba).any(), "OOF probabilities contain NaN (unfilled rows)"
-    assert not pd.isna(oof_pred).any(), "OOF predictions contain unfilled rows"
-
-    return pd.DataFrame(fold_rows), oof_pred, oof_proba
+    fold_df = pd.DataFrame(fold_rows)
+    if return_oof:
+        assert not np.isnan(oof_proba).any(), "OOF probabilities contain NaN"
+        assert not pd.isna(oof_pred).any(), "OOF predictions contain unfilled rows"
+        return fold_df, oof_pred, oof_proba
+    return fold_df
 
 
 def save_results(name: str, fold_df: pd.DataFrame, out_dir=METRICS_DIR):
@@ -217,3 +213,55 @@ def fp_breakdown(oof_pred, y_true_family, X, by=("service", "flag")):
         f["by"] = col
         frames.append(f)
     return pd.concat(frames, ignore_index=True), n_fp
+
+
+
+def get_repeated_cv(n_splits=5, n_repeats=3, seed=SEED):
+    return RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=seed)
+
+
+def sign_test(a, b) -> dict:
+    deltas = np.asarray(a) - np.asarray(b)
+    wins = int((deltas > 0).sum())
+    losses = int((deltas < 0).sum())
+    ties = int((deltas == 0).sum())
+    n = wins + losses
+    p = binomtest(wins, n, 0.5, alternative="greater").pvalue if n else 1.0
+    return {"wins": wins, "losses": losses, "ties": ties, "n_non_tie": n, "p_value": float(p)}
+
+
+def apply_selection_rule(summary: pd.DataFrame, fpr_limit: float = 0.005) -> dict:
+    s = summary.copy()
+    discarded = s.loc[s["fpr_mean"] > fpr_limit, "model"].tolist()
+    s = s[s["fpr_mean"] <= fpr_limit].copy()
+    if s.empty:
+        return {"winner": None, "step": "all models failed FPR gate", "discarded": discarded}
+
+    
+    s["rare_recall"] = s["recall_R2L_mean"] + s["recall_U2R_mean"]
+    s["total_time"] = s["fit_time_mean"] + s["predict_time_per_1k_mean"]
+    s = s.sort_values("macro_f1_mean", ascending=False).reset_index(drop=True)
+
+    if len(s) == 1:
+        return {"winner": s.iloc[0]["model"], "step": "single model passed FPR gate",
+                "discarded": discarded}
+
+    top, second = s.iloc[0], s.iloc[1]
+    gap = float(top["macro_f1_mean"] - second["macro_f1_mean"])
+    pooled_sd = float((top["macro_f1_sd"] + second["macro_f1_sd"]) / 2)
+    base = {"gap": gap, "pooled_sd": pooled_sd, "runner_up": second["model"],
+            "discarded": discarded}
+
+    if gap > pooled_sd:
+        return {"winner": top["model"], "step": "macro-F1 lead exceeds 1 fold SD", **base}
+    if top["rare_recall"] != second["rare_recall"]:
+        w = top if top["rare_recall"] > second["rare_recall"] else second
+        return {"winner": w["model"], "step": "tie-break (a) R2L+U2R recall",
+                "runner_up": (second if w is top else top)["model"], **base}
+    if top["fpr_mean"] != second["fpr_mean"]:
+        w = top if top["fpr_mean"] < second["fpr_mean"] else second
+        return {"winner": w["model"], "step": "tie-break (b) lower FPR",
+                "runner_up": (second if w is top else top)["model"], **base}
+    w = top if top["total_time"] < second["total_time"] else second
+    return {"winner": w["model"], "step": "tie-break (c) speed",
+            "runner_up": (second if w is top else top)["model"], **base}

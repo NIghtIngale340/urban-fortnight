@@ -512,3 +512,42 @@ This log records our actual development journey, empirical observations, failure
 - **Artifacts Generated:**
   - Figure: `reports/figures/p15_confusion_pooled.png`
   - Per-attack metric tables: `reports/metrics/p15_per_attack_{model}_{family}.csv` for all 4 models and both rare families.
+
+---
+
+### Entry 15: Equal-Budget Randomized Hyperparameter Tuning & Inner-CV Dynamics (Phase 16)
+- **Date:** October 13, 2026
+- **Question Raised:** Under frozen settings (`USE_CLASS_WEIGHT = True`, `USE_ENGINEERED = True`), can targeted randomized hyperparameter search (`RandomizedSearchCV` with 3-fold inner Stratified CV, scoring on Macro-F1 across all 5 families) improve generalization across the four candidate architectures, and what do the resulting parameter configurations reveal about model capacity and regularization?
+- **Methodology & Search Spaces:**
+  - **Harness:** `RandomizedSearchCV` using 3-fold stratified inner cross-validation (`StratifiedKFold(n_splits=3, shuffle=True, random_state=SEED + 1)`), evaluating Macro-F1 (`labels=FAMILIES, zero_division=0`).
+  - **Search Spaces & Budgets:**
+    - `M1_logreg`: `clf__C` $\in [0.01, 0.1, 1, 10]$ (budget: 4 candidates, exhaustive).
+    - `M2_tree`: `clf__max_depth` $\in [None, 8, 12, 16, 24]$, `clf__min_samples_leaf` $\in [1, 2, 5, 10]$, `clf__criterion` $\in ['gini', 'entropy']$, `clf__ccp_alpha` $\in [0, 1e-5, 1e-4]$ (120 combinations, budget: 30 candidates).
+    - `M3_rf`: `clf__max_features` $\in ['sqrt', 0.2, 0.4]$, `clf__min_samples_leaf` $\in [1, 2, 4]$, `clf__max_depth` $\in [None, 25]$ (18 combinations, budget: 18 candidates, exhaustive).
+    - `M4_lgbm`: `clf__n_estimators` $\in [200, 400, 800]$, `clf__learning_rate` $\in [0.03, 0.05, 0.1]$, `clf__num_leaves` $\in [15, 31, 63]$, `clf__min_child_samples` $\in [5, 10, 20]$, `clf__colsample_bytree` $\in [0.6, 0.8, 1.0]$, `clf__reg_lambda` $\in [0, 1, 5]$ (729 combinations, budget: 20 candidates).
+- **Key Empirical Discoveries & Results:**
+  1. **Tuned vs. Default Inner 3-Fold Macro-F1 Comparison:**
+     - `M1_logreg`: Default $= 0.7815 \pm 0.0282 \rightarrow$ Tuned $= \mathbf{0.8249} \pm 0.0230$ ($\Delta = \mathbf{+0.0434}$, $+4.34$ percentage points gain!).
+       - Best configuration: `{'clf__C': 10}`.
+       - Relaxing L2 shrinkage from default $C=1.0$ to $C=10$ allows the linear decision boundary to fit sharper separating hyperplanes for sparse rare-class indicators without incurring numerical instability.
+     - `M2_tree`: Default $= 0.9240 \pm 0.0128 \rightarrow$ Tuned $= \mathbf{0.9407} \pm 0.0045$ ($\Delta = \mathbf{+0.0166}$, $+1.66$ percentage points gain).
+       - Best configuration: `{'clf__min_samples_leaf': 1, 'clf__max_depth': 24, 'clf__criterion': 'entropy', 'clf__ccp_alpha': 0}`.
+       - Information gain (`entropy`) combined with deep leaves ($depth=24$) isolates localized minority attack signatures (`U2R`, `R2L`) more cleanly than Gini impurity.
+     - `M3_rf`: Default $= 0.9569 \pm 0.0070 \rightarrow$ Tuned $= \mathbf{0.9654} \pm 0.0061$ ($\Delta = \mathbf{+0.0085}$, $+0.85$ percentage points gain).
+       - Best configuration: `{'clf__min_samples_leaf': 4, 'clf__max_features': 0.4, 'clf__max_depth': None}`.
+       - Substantially widening the feature subspace from $\sqrt{p} \approx 11$ up to $0.4 \times 119 \approx 48$ features allows individual trees to inspect multiple correlated discriminators simultaneously, while `min_samples_leaf=4` prevents leaf-level noise memorization.
+     - `M4_lgbm`: Default $= 0.9679 \pm 0.0104 \rightarrow$ Tuned $= \mathbf{0.9670} \pm 0.0110$ ($\Delta = -0.0009$).
+       - Best configuration: `{'clf__reg_lambda': 0, 'clf__num_leaves': 63, 'clf__n_estimators': 800, 'clf__min_child_samples': 20, 'clf__learning_rate': 0.03, 'clf__colsample_bytree': 0.6}`.
+       - The minute $-0.0009$ delta is well within fold standard deviation ($\sigma = 0.0104$) and reflects that default $n\_estimators=300$ was not evaluated in the grid. LightGBM's default settings were already operating near the empirical ceiling.
+  2. **Model Selection Horizon for Phase 17:**
+     - The gap between tuned Random Forest M3 ($0.9654$) and tuned LightGBM M4 ($0.9670$) is merely $0.0016$, well below fold variability ($\sigma \approx 0.011$).
+     - The best configurations were exported to `models/best_params.json` and are strictly locked for the repeated outer cross-validation and definitive model selection protocol in Phase 17.
+- **Artifacts Generated:**
+  - Tuning results tables:
+    - `reports/metrics/tuning_M1_logreg.csv` (4 candidates)
+    - `reports/metrics/tuning_M2_tree.csv` (30 candidates)
+    - `reports/metrics/tuning_M3_rf.csv` (18 candidates)
+    - `reports/metrics/tuning_M4_lgbm.csv` (20 candidates)
+  - Tuned vs. default summary: `reports/metrics/tuned_vs_default_inner.csv`
+  - Exported parameters: `models/best_params.json`
+

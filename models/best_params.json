@@ -1,0 +1,24 @@
+{
+  "M1_logreg": {
+    "clf__C": 10
+  },
+  "M2_tree": {
+    "clf__min_samples_leaf": 1,
+    "clf__max_depth": 24,
+    "clf__criterion": "entropy",
+    "clf__ccp_alpha": 0
+  },
+  "M3_rf": {
+    "clf__min_samples_leaf": 4,
+    "clf__max_features": 0.4,
+    "clf__max_depth": null
+  },
+  "M4_lgbm": {
+    "clf__reg_lambda": 0,
+    "clf__num_leaves": 63,
+    "clf__n_estimators": 800,
+    "clf__min_child_samples": 20,
+    "clf__learning_rate": 0.03,
+    "clf__colsample_bytree": 0.6
+  }
+}

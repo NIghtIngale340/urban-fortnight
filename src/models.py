@@ -60,3 +60,36 @@ def params_diff(est_a, est_b):
         if repr(va) != repr(vb):
             diffs.append(k)
     return sorted(diffs)
+
+
+def get_search_spaces() -> dict:
+    """Search spaces keyed by pipeline param names (clf__...).
+    Class weights and engineered features are FROZEN and are NOT searched."""
+    return {
+        "M1_logreg": {
+            "clf__C": [0.01, 0.1, 1, 10],                       # 4 total
+        },
+        "M2_tree": {
+            "clf__max_depth": [None, 8, 12, 16, 24],
+            "clf__min_samples_leaf": [1, 2, 5, 10],
+            "clf__criterion": ["gini", "entropy"],
+            "clf__ccp_alpha": [0, 1e-5, 1e-4],                  # 120 total -> sample 30
+        },
+        "M3_rf": {
+            "clf__max_features": ["sqrt", 0.2, 0.4],
+            "clf__min_samples_leaf": [1, 2, 4],
+            "clf__max_depth": [None, 25],                        # 18 total -> all
+        },
+        "M4_lgbm": {
+            "clf__n_estimators": [200, 400, 800],
+            "clf__learning_rate": [0.03, 0.05, 0.1],
+            "clf__num_leaves": [15, 31, 63],
+            "clf__min_child_samples": [5, 10, 20],
+            "clf__colsample_bytree": [0.6, 0.8, 1.0],
+            "clf__reg_lambda": [0, 1, 5],                        # 729 total -> sample 20
+        },
+    }
+
+# Budgets per model (how many candidates to evaluate)
+def get_tuning_budgets() -> dict:
+    return {"M1_logreg": 4, "M2_tree": 30, "M3_rf": 18, "M4_lgbm": 20}

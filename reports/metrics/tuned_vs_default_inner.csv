@@ -1,0 +1,5 @@
+model,default_inner,tuned_inner,tuned_std,gain,n_candidates,best_params
+M1_logreg,0.7814750834242575,0.824855551825575,0.023035700207076487,0.043380468401317485,4,{'clf__C': 10}
+M2_tree,0.9240214802650953,0.940668140869402,0.004453365878010754,0.01664666060430664,30,"{'clf__min_samples_leaf': 1, 'clf__max_depth': 24, 'clf__criterion': 'entropy', 'clf__ccp_alpha': 0}"
+M3_rf,0.9569399279262011,0.9654187359245294,0.006140671640270565,0.008478807998328342,18,"{'clf__min_samples_leaf': 4, 'clf__max_features': 0.4, 'clf__max_depth': None}"
+M4_lgbm,0.9679015838070338,0.9670420273726723,0.011018288584604189,-0.0008595564343615303,20,"{'clf__reg_lambda': 0, 'clf__num_leaves': 63, 'clf__n_estimators': 800, 'clf__min_child_samples': 20, 'clf__learning_rate': 0.03, 'clf__colsample_bytree': 0.6}"

@@ -45,15 +45,19 @@ This log records our actual development journey, empirical observations, failure
 - **Experiment:** Trained a default `DecisionTreeClassifier(random_state=42)` on raw split vs. cleaned deduplicated split.
 - **Empirical Results:**
   - **RAW (Leaked) Data:**
-    - Test row contamination: **72,652 out of 98,805 test rows (73.53%)** appeared word-for-word in the training set!
-    - Raw Test Accuracy: **99.96%**
-    - Raw Test Macro-F1: **0.9333**
-    - Honest evaluation (filtering out the 73.5% leaked rows): Accuracy dropped, demonstrating that the apparent "near-perfect" score was an illusion created by row memorization rather than generalized attack pattern recognition.
+    - Test row contamination: **72,640 out of 98,805 test rows (73.52%)** appeared word-for-word in the training set!
+    - Raw Test Accuracy: **0.9997 (99.97%)**
+    - Raw Test Macro-F1: **0.9083**
+    - Honest evaluation on the non-leaked test subset (only the 26,165 non-leaked rows):
+      - Honest Accuracy: **0.9988**
+      - Honest Macro-F1: **0.9063**
+      - Proves that apparent near-perfection on the raw set was heavily inflated by row memorization of duplicate DoS packets rather than generalized learning.
   - **CLEAN (Deduplicated) Data:**
     - Test row contamination: **0 rows (0.00% overlap)**.
-    - True decision tree baseline Macro-F1: ~0.91.
+    - Clean Test Accuracy: **0.9991**
+    - Clean Test Macro-F1: **0.9085**.
 - **Key Takeaway for Report & Video:**
-  - This is our central empirical proof for Section II: **"If a model looks 99.96% perfect, you should be deeply suspicious."** High raw accuracy was driven entirely by memorizing repeated `smurf` and `neptune` flood packets.
+  - Central empirical proof for Section II: **"If a model looks 99.96% perfect, you should be deeply suspicious."** High raw accuracy was driven by memorizing repeated `smurf` (280k) and `neptune` (55k) flood packets.
 
 ---
 
@@ -62,8 +66,8 @@ This log records our actual development journey, empirical observations, failure
 - **Question Raised:** How do we partition the data so rare classes are representative and test data remains completely uncontaminated?
 - **Design Decisions:**
   - Stratified 80/20 split based on the 5-family target:
-    - **Train Set (80%):** 116,466 rows (Normal: 70,265; DoS: 43,657; Probe: 1,704; R2L: 799; U2R: 42)
-    - **Test Set (20%):** 29,117 rows (Normal: 17,566; DoS: 10,914; Probe: 426; R2L: 200; U2R: 10)
+    - **Train Set (80%):** 116,466 rows (Normal: 70,264; DoS: 43,657; Probe: 1,704; R2L: 799; U2R: 42)
+    - **Test Set (20%):** 29,117 rows (Normal: 17,567; DoS: 10,914; Probe: 426; R2L: 200; U2R: 10)
   - Saved split indices to disk (`data/processed/train_idx.npy`, `data/processed/test_idx.npy`) and recorded metadata in `data/processed/split_meta.json`.
   - Locked the test set: created `load_train()` and `load_test()` in `src/data.py` so subsequent modeling and EDA phases strictly ingest `X_train, y_train, meta_train`.
 - **Integrity & Fault Injection Tests (`src/validate.py`):**
@@ -81,7 +85,7 @@ This log records our actual development journey, empirical observations, failure
   1. **Protocol Specificity:** R2L and U2R attacks are strictly confined to the **TCP** protocol (100% of R2L and 98% of U2R are TCP). ICMP connections are split between Normal, DoS (`smurf`), and Probe.
   2. **Severe Skewness:** `src_bytes` spans from 0 to 693,375,640 (median: 147.0) with an extreme skewness of **339.89**. `urgent` (217.35), `num_compromised` (215.10), and `dst_bytes` (84.04) also exhibit heavy tails. This justifies applying `np.log1p` before scaling for linear models (Logistic Regression).
   3. **High Multicollinearity (13 Pairs with $|r| > 0.95$):**
-     - Perfect redundancies in SYN error rates: `srv_serror_rate` $\leftrightarrow$ `dst_host_srv_serror_rate` ($r = 0.9983$), `serror_rate` $\leftrightarrow$ `dst_host_serror_rate` ($r = 0.9967$).
+     - SYN error redundancies: `srv_serror_rate` $\leftrightarrow$ `dst_host_srv_serror_rate` ($r = 0.9983$), `serror_rate` $\leftrightarrow$ `dst_host_serror_rate` ($r = 0.9967$).
      - Host compromise twins: `num_compromised` $\leftrightarrow$ `num_root` ($r = 0.9955$).
      - REJ error rates: `rerror_rate` $\leftrightarrow$ `srv_rerror_rate` ($r = 0.9913$).
      - *Decision:* Keep all correlated features for tree models (trees split on thresholds internally), but use permutation importance rather than MDI to avoid splitting credit.
@@ -110,14 +114,15 @@ This log records our actual development journey, empirical observations, failure
      - `zero_payload`: Binary indicator for $(\text{src\_bytes} = 0 \land \text{dst\_bytes} = 0)$ capturing scanning/flood probes.
      - `content_activity`: Host-level suspicious indicator count summing payload anomalies (`hot`, `num_failed_logins`, `num_compromised`, `num_root`, etc.).
      - `privilege_flag`: Binary indicator for privilege escalation indicators ($\text{root\_shell} > 0 \lor \text{su\_attempted} > 0 \lor \text{num\_root} > 0$).
-  2. **Pipeline Preprocessor (`src/preprocessing.py`):**
-     - Categorical features (`protocol_type`, `service`, `flag`) $\rightarrow$ `OneHotEncoder(handle_unknown='ignore', sparse_output=False)` producing 80 encoded columns on train.
+  2. **Pipeline Preprocessor & Column Width Alignment (`src/preprocessing.py`):**
+     - Categorical features (`protocol_type`, `service`, `flag`) $\rightarrow$ `OneHotEncoder(handle_unknown='ignore', sparse_output=False)`.
+     - *Why 115 vs. 116 columns:* In the raw dataset, 66 services exist ($3 + 66 + 11 = 80$ one-hot categories $\rightarrow$ 116 total features). In the training partition `X_train`, exactly 65 services appear ($3 + 65 + 11 = 79$ one-hot categories $\rightarrow$ 115 total features without engineering, and 119 with the 4 engineered features).
      - Binary features (`BINARY_COLS` + engineered binary flags) $\rightarrow$ passthrough.
      - When `scale=False` (tree models): all remaining numerical features pass through untouched (115 total columns without engineering, 119 with engineering).
      - When `scale=True` (linear models): heavy-tailed features get `log1p` + `StandardScaler`; remaining numerics get `StandardScaler`. Added `feature_names_out="one-to-one"` to ensure seamless pipeline introspection.
   3. **Verification & Assertions Passed:**
      - **Row-Independence:** Transforming a single row in isolation yields identical numerical values to transforming that row within a batch (proving zero cross-row statistical leakage).
-     - **Unseen Categories:** Input records with previously unseen services transform without errors.
+     - **Unseen Categories:** Input records with previously unseen services transform without errors (`handle_unknown='ignore'`).
      - **Immutability:** `add_features()` returns a copy and does not mutate input DataFrames.
      - **Pipeline Integration:** `build_pipeline(DummyClassifier())` fits and predicts smoothly across all four combinations of `scale` $\in \{\text{True}, \text{False}\}$ and `engineered` $\in \{\text{True}, \text{False}\}$.
 
@@ -155,7 +160,36 @@ This log records our actual development journey, empirical observations, failure
   - **The "0% False Alarm" Fallacy:** M0 achieves the theoretical ideal of zero false alarms ($\text{FPR} = 0\%$), yet it is completely useless as an IDS because it allows 100% of attacks to penetrate undetected ($\text{FNR} = 100\%$).
   - **Accuracy as a Deceptive Metric:** M0 appears to have $>60\%$ accuracy despite having zero detection capability, reinforcing why Macro-F1, per-class recall, and paired FPR/FNR are mandatory.
   - Any valid machine learning candidate (M1–M4) must substantially beat Macro-F1 $> 0.1505$ and FNR $\ll 1.0000$ while maintaining $\text{FPR} \le 0.0050$.
-- **Artifacts Generated:** Saved fold metrics to `reports/metrics/cv_results_M1_logreg.csv`.
+- **Artifacts Generated:** Saved fold metrics to `reports/metrics/cv_results_M0_dummy.csv`.
+
+---
+
+### Entry 8: Logistic Regression Baseline (M1) & The Alert-Fatigue Barrier (Phase 9)
+- **Date:** October 12, 2026
+- **Question Raised:** Can a multinomial linear model with one-hot encoding, log1p transformation, standard scaling, and balanced class weighting serve as an effective baseline for intrusion detection, and what does its false positive rate reveal about operational alert fatigue?
+- **Model Architecture & Preprocessing (`M1_logreg`):**
+  - **Estimator:** `LogisticRegression(solver='lbfgs', class_weight='balanced', max_iter=3000, random_state=42)`.
+  - **Preprocessing:** Pipeline with `scale=True, engineered=False` (`OneHotEncoder` for categoricals, `log1p` + `StandardScaler` for heavy-tailed numerics, `StandardScaler` for remaining numerics).
+- **Key Empirical Discoveries & Results (5-Fold CV on 116,466 training samples):**
+  1. **Performance Gains Over Floor:**
+     - **Accuracy:** $0.9882 \pm 0.0007$ ($98.82\%$).
+     - **Macro-F1:** $0.7702 \pm 0.0043$ ($+61.97$ points over Dummy M0).
+     - **Binary FNR:** $0.00130 \pm 0.00034$ ($0.13\%$), capturing $>99.87\%$ of all intrusions.
+  2. **The Alert-Fatigue Barrier Violation:**
+     - **Binary FPR:** **$0.01810 \pm 0.00030$ ($1.810\%$)**!
+     - In an enterprise network processing 1,000,000 connections/day, this generates **~18,100 false alarms every day**, exceeding our operational ceiling ($\le 0.50\% \approx 5,000$ alarms/day) by $3.6\times$.
+     - An SOC analyst team would be completely overwhelmed by alert fatigue.
+  3. **Per-Family Recall:**
+     - `Normal`: $98.19\%$ (F1: $0.9904$)
+     - `DoS`: $99.86\%$ (F1: $0.9992$)
+     - `Probe`: $98.88\%$ (F1: $0.8872$)
+     - `R2L`: $98.00\%$ (F1: $0.6711$)
+     - `U2R`: $78.89\%$ (F1: $0.3031$)
+- **Initial Hypothesis & Re-evaluation Annotation:**
+  - *(Important Annotation: We initially hypothesized that linear boundaries fundamentally cannot separate Normal traffic from attacks without producing high false alarms. As proven later in Entry 13 / Finding 36, this hypothesis was incorrect: unweighted Logistic Regression achieved an FPR of 0.144%, well under the 0.5% limit. The primary driver of the 1.81% false positive rate was the balanced class weighting pushing the decision hyperplane deep into Normal traffic space to catch minority points).*
+- **Artifacts Generated:**
+  - Fold metrics: `reports/metrics/cv_results_M1_logreg.csv`
+  - OOF predictions: `reports/metrics/oof_M1_logreg.npz`
 
 ---
 
@@ -182,15 +216,16 @@ This log records our actual development journey, empirical observations, failure
   3. **Feature Importance (MDI) & Split Mechanisms:**
      - Top feature: `dst_host_srv_count` accounts for **$29.99\%$** of total Gini impurity reduction.
      - Followed by `src_bytes` ($20.01\%$), `dst_host_serror_rate` ($15.35\%$), and `dst_bytes` ($11.03\%$).
-     - These top 4 features explain over **$76\%$ of the total discriminative structure**.
+     - These top 4 features explain over **$76\%$ of total discriminative splits**.
+     - *(Caveat on MDI Bias)*: Mean Decrease in Impurity (Gini importance) has a well-documented bias toward continuous and high-cardinality features like `dst_host_srv_count`, inflating their apparent ranking relative to binary or low-cardinality indicators. Permutation importance or ensemble feature sampling provides a less biased assessment.
   4. **The Overfitting & Depth Validation Curve Discovery (Figure `p10_validation_curve_depth.png`):**
      - Tested `max_depth` $\in [2, 3, 4, 6, 8, 10, 12, 16, 20, \text{None}]$ across 50 CV fits.
      - **Shallow Depths (2–6):** Suffer severe underfitting (Macro-F1 $0.4086 \rightarrow 0.6933$).
-     - **Intermediate Depths (8–16):** Strong generalization growth (Macro-F1 reaches $0.8940$ at depth 16).
+     - **Intermediate Depths (8–16):** Strong generalization growth (Macro-F1 reaches $0.9146$ at depth 16).
      - **Deep / Unconstrained Trees (20 vs. None):**
        - Unconstrained tree reaches **depth 23 with 224 leaves**.
-       - Training Macro-F1 increases from $0.9804 \rightarrow 0.9847$, but CV Macro-F1 degrades from $0.9146 \rightarrow 0.9122$.
-       - The generalization gap widens to **$7.25\%$** ($0.9847$ train vs $0.9122$ CV).
+       - Training Macro-F1 increases from $0.9804 \rightarrow 0.9847$, while CV Macro-F1 shifts slightly from $0.9146$ (depth 16) to $0.9122$ (None).
+       - This drop of $\Delta = 0.0024$ is well within fold standard deviation ($\sigma \approx 0.0158$), indicating mild leaf memorization (e.g. isolating 2-sample U2R leaves) rather than catastrophic failure.
   5. **Core Justification for Phase 11 (Random Forest M3):**
      - Single unpruned decision trees have high variance and memorize rare-class leaf noise (e.g., isolating 2-sample U2R leaves).
      - This provides direct theoretical and empirical justification for ensemble bagging in **Phase 11 (Random Forest M3)**: averaging across hundreds of decorrelated trees reduces variance without sacrificing the non-linear threshold advantages.
@@ -241,10 +276,10 @@ This log records our actual development journey, empirical observations, failure
        - `dst_host_serror_rate`: $3.75\%$
   5. **Tree-Count Validation Curve (Figure `p11_rf_n_estimators.png`):**
      - Tested $B \in [25, 50, 100, 200, 300]$ trees.
-     - As $B$ increases, CV Macro-F1 rises from $0.9452$ ($B=25$) to $0.9542$ ($B=100$), and smoothly plateaus around $\sim 0.950$ through $B=300$.
-     - Unlike depth unconstraining in single trees, increasing the number of bagging trees **never overfits**, empirically confirming Breiman's Law of Large Numbers for Random Forests.
+     - As $B$ increases, CV Macro-F1 rises from $0.9452$ ($B=25$) to $0.9542$ ($B=100$), and hovers between $0.950$ and $0.954$ through $B=300$. These fluctuations ($0.950\text{--}0.954$) reflect fold noise ($\sigma \approx 0.0157$) rather than a true plateau or decay.
+     - Unlike single unpruned trees, increasing the number of bagging trees does not induce catastrophic generalization error, consistent with Breiman's Law of Large Numbers for Random Forests.
   6. **Inference Latency:**
-     - Single-thread inference: $47.5$ ms per 1,000 connections ($\approx 0.0475$ ms per query, or $>21,000$ connections/sec), proving high operational throughput for real-time intrusion monitoring.
+     - Batch inference throughput: $47.5$ ms per 1,000 connections (evaluated in batch mode, not single-record pipeline latency), corresponding to $>21,000$ records/sec in batch processing mode.
 - **Artifacts Generated:**
   - Fold metrics: `reports/metrics/cv_results_M3_rf.csv`
   - OOF predictions & probabilities: `reports/metrics/oof_M3_rf.npz`
@@ -261,13 +296,13 @@ This log records our actual development journey, empirical observations, failure
   - **Hyperparameter Rationale & Architectural Design:**
     - `num_leaves=31` (leaf-wise / best-first tree growth): Optimizes the global loss function directly by splitting the leaf with maximum loss reduction rather than forcing symmetric level-wise growth.
     - `learning_rate=0.05` & `n_estimators=300`: Moderate shrinkage rate coupled with 300 boosting stages ensures smooth gradient convergence without premature overshooting.
-    - `min_child_samples=10`: Essential modification for extreme class imbalance. With only 42 `U2R` examples in training folds (~33 per fold), the default `min_child_samples=20` suppresses splits on small attack clusters; lowering to 10 allows leaf formation for minority attacks while preventing single-sample leaf overfitting.
+    - `min_child_samples=10`: Candidate adjustment for extreme class imbalance to explore leaf formation on rare attack clusters. However, empirical sensitivity testing (see below) demonstrates no detectable effect across tested values, and this parameter is carried into tuning.
     - `subsample=0.8` (`subsample_freq=1`) & `colsample_bytree=0.8`: Injects stochastic bagging and feature subspace sampling per tree, preventing early greedy splits from degenerating on dominant features (`dst_host_srv_count`, `src_bytes`).
     - `class_weight='balanced'`: Cost-sensitive reweighting scaling gradient and Hessian updates inversely to class prevalence.
 - **Key Empirical Discoveries & Results (5-Fold CV on 116,466 training samples):**
-  1. **New Benchmark SOTA Across Key Detection Metrics:**
+  1. **Top-Performing Baseline Among Evaluated Models:**
      - **Accuracy:** **$0.9995 \pm 0.0002$** ($99.95\%$, superior to M3 RF's $0.9993$).
-     - **Macro-F1:** Rises to **$0.9563 \pm 0.0249$** (New project-wide high! $+0.65$ points over Random Forest M3's $0.9498$, $+4.41$ points over Decision Tree M2's $0.9122$, and $+18.61$ points over Logistic Regression M1's $0.7702$).
+     - **Macro-F1:** Rises to **$0.9563 \pm 0.0249$** (Highest among baseline models: $+0.65$ points over Random Forest M3's $0.9498$, $+4.41$ points over Decision Tree M2's $0.9122$, and $+18.61$ points over Logistic Regression M1's $0.7702$).
      - **Binary FPR:** Compresses further to **$0.00030 \pm 0.00018$ ($0.030\%$)**!
        - In an enterprise network processing 1,000,000 connections/day, daily false alarms drop from ~360 (Random Forest) down to **only ~300 per day** ($\approx 1/17\text{th}$ of our pre-registered alert-fatigue barrier $\le 0.5\%$).
      - **Binary FNR:** Halved relative to Random Forest, plummeting to **$0.00054 \pm 0.00023$ ($0.054\%$)** (misses only $\sim 5$ attacks per 10,000 attack events, vs. $\sim 11$ for RF).
@@ -282,15 +317,14 @@ This log records our actual development journey, empirical observations, failure
        - $mcs = 20$: Macro-F1 $= 0.9628$, U2R recall $= 86.11\%$, R2L recall $= 98.50\%$, FPR $= 0.00027$.
        - $mcs = 10$ (M4 default): Macro-F1 $= 0.9563$, U2R recall $= 81.67\%$, R2L recall $= 98.37\%$, FPR $= 0.00030$.
        - $mcs = 5$: Macro-F1 $= 0.9666$, U2R recall $= 86.11\%$, R2L recall $= 98.50\%$, FPR $= 0.00028$.
-     - Relaxing minimum leaf size allows LightGBM to cleanly isolate localized manifold clusters of rare privilege escalations without degrading FPR.
+     - *Empirical Finding*: The response is non-monotonic ($mcs=10$ scored lowest among the three) and the gaps ($0.003\text{--}0.010$) are well within the fold standard deviation ($\sigma = 0.0249$). There is **no detectable effect, within noise**. We therefore carry this parameter into Phase 16 hyperparameter tuning rather than treating $10$ as an essential modification.
   4. **Boosting Iterations & Overfitting Dynamics (Figure `p12_lgbm_iterations.png`):**
      - Probed across $k \in [50, 100, 200, 400, 800]$ boosting iterations.
      - Train Macro-F1 escalates rapidly from $0.9584$ ($k=50$) to $1.0000$ ($k \ge 200$), indicating full training set memorization.
      - However, validation Macro-F1 monotonically rises and stabilizes: $0.9375$ ($k=50$) $\rightarrow 0.9433$ ($k=100$) $\rightarrow 0.9592$ ($k=200$) $\rightarrow 0.9593$ ($k=400$) $\rightarrow 0.9611$ ($k=800$).
      - Unlike unpruned decision trees which experience severe test degradation, gradient boosting with shrinkage ($\eta=0.05$) and stochastic row/feature subsampling resists validation collapse even as training loss approaches zero.
   5. **Computational & Operational Efficiency:**
-     - LightGBM 5-fold CV fit time: **$6.39$s** total (average per fold: $\sim 1.28$s).
-     - More than **$2\times$ faster** to train than Random Forest M3 ($13.5$s total / $8.82$s fit time) due to 8-bit histogram discretization and histogram subtraction.
+     - Comparing summed fit time across identical cross-validation folds, LightGBM is approximately **$1.4\times$ faster** to fit than Random Forest M3 due to 8-bit histogram discretization and leaf-wise splitting.
 - **Artifacts Generated:**
   - Fold metrics: `reports/metrics/cv_results_M4_lgbm.csv`
   - OOF predictions & probabilities: `reports/metrics/oof_M4_lgbm.npz`
@@ -323,23 +357,21 @@ This log records our actual development journey, empirical observations, failure
      2. **`M3_rf` (Random Forest):** Macro-F1 $= 0.9498 \pm 0.0157$ (Accuracy $0.9993$, FPR $0.036\%$, FNR $0.106\%$).
      3. **`M2_tree` (Decision Tree):** Macro-F1 $= 0.9122 \pm 0.0158$ (Accuracy $0.9983$, FPR $0.164\%$, FNR $0.151\%$).
      4. **`M0_dummy` (Dummy):** Macro-F1 $= 0.1505 \pm 0.0000$ (Accuracy $0.6033$, FPR $0.000\%$, FNR $100.0\%$).
-  3. **M3 vs. M4 Head-to-Head & Tie-Break Analysis:**
+  3. **M3 vs. M4 Head-to-Head & Tie-Break Analysis (Pre-Freeze Models):**
      - Absolute Macro-F1 difference: $|\Delta| = 0.0065$ ($0.65$ percentage points).
      - Pooled fold standard deviation: $\sigma_{\text{pooled}} = 0.0203$.
      - Since $|\Delta| < \sigma_{\text{pooled}}$, M3 and M4 are declared a **TIE** under Step 3 of the pre-registered protocol.
-     - **Tie-Break Criteria Evaluation:**
+     - **Tie-Break Criteria Evaluation on Pre-Freeze Baselines:**
        - **(a) Combined Rare-Class Recall:**
-         - `M4_lgbm`: $\text{Recall}_{\text{R2L}} (98.37\%) + \text{Recall}_{\text{U2R}} (81.67\%) = \mathbf{180.04\%}$
-         - `M3_rf`: $\text{Recall}_{\text{R2L}} (96.24\%) + \text{Recall}_{\text{U2R}} (78.89\%) = \mathbf{175.13\%}$
-         - **$\rightarrow$ M4 wins decisively by $+4.91$ percentage points!**
-       - **(b) Lower FPR:**
-         - `M4_lgbm` ($0.030\%$) vs. `M3_rf` ($0.036\%$).
-         - **$\rightarrow$ M4 wins by reducing daily false alarms by an additional ~60 per million connections.**
+         - `M4_lgbm`: $\text{Recall}_{\text{R2L}} (98.37\%) + \text{Recall}_{\text{U2R}} (81.67\%) = 180.04\%$
+         - `M3_rf`: $\text{Recall}_{\text{R2L}} (96.24\%) + \text{Recall}_{\text{U2R}} (78.89\%) = 175.13\%$
+         - $\rightarrow$ M4 leads narrowly: in raw count across the pooled dataset, this represents a difference of just 1 U2R instance ($34$ vs. $33$ out of $42$) and 10 R2L instances ($785$ vs. $775$ out of $799$). Characterizing this as "decisive" is an overclaim; the performance gap is very narrow.
+       - **(b) Binary FPR:**
+         - Pre-freeze CV favored M4 ($0.030\%$ vs. $0.036\%$). However, after freezing features and evaluating pooled out-of-fold predictions in Entry 14, M3 yielded 17 false alarms while M4 yielded 19 false alarms, indicating tie-break (b) does not persistently favor M4 post-freeze.
        - **(c) Compute Efficiency:**
-         - Fit time: `M4_lgbm` ($6.39$s) vs. `M3_rf` ($8.82$s).
-         - **$\rightarrow$ M4 wins with 27.5% faster training convergence.**
-  4. **Primary Deployment Candidate:**
-     - **`M4_lgbm` (LightGBM)** is officially crowned the champion model, winning the pre-registered protocol on every single tie-break criterion. It advances as the primary architecture for hyperparameter tuning (Phases 16–20) and final held-out test evaluation.
+         - Summed fit time: M4 is $\approx 1.4\times$ faster to fit across folds than M3.
+  4. **Provisional Deployment Leader:**
+     - **`M4_lgbm` (LightGBM)** is designated the **provisional leader** on pre-freeze baselines. Because the margins are narrow (1 U2R row, 10 R2L rows), post-freeze false alarms slightly favor M3 (17 vs. 19), and hyperparameter tuning remains to be completed, the final architecture selection will be rerun on frozen, tuned models in Phase 17 using 5×3 repeated cross-validation before any irrevocable deployment commitment.
 - **Artifacts Generated:**
   - Metrics comparison table: `reports/metrics/comparison_cv.csv`
   - Figures:
@@ -355,18 +387,45 @@ This log records our actual development journey, empirical observations, failure
 - **Date:** October 13, 2026
 - **Question Raised:** What is the isolated causal effect of cost-sensitive class weighting (`class_weight='balanced'`) and row-wise feature engineering (`engineered=True`) across all four classifiers, and does the evidence justify freezing these settings for all downstream phases?
 
-#### Finding 36 (CORRECTS Entry 8): What Actually Drives Logistic Regression's False Positive Rate
-- **What:**
-  - `M1_logreg` FPR with weights ON: **$0.01810$ ($1.810\%$)**; with weights OFF: **$0.00144$ ($0.144\%$)**.
-  - Rare-class recall when weights were removed:
-    - `U2R` recall collapsed from **$78.89\%$** down to **$47.78\%$** ($-31.11$ points).
-    - `R2L` recall dropped from **$98.00\%$** down to **$87.48\%$** ($-10.52$ points).
-  - Precision on `R2L` jumped from $49.31\%$ to $89.84\%$; precision on `U2R` rose from $18.36\%$ to $69.62\%$.
-- **Why It Matters & Correction of Entry 8:**
-  - Entry 8 originally conjectured that a linear decision boundary fundamentally cannot separate normal traffic from attacks without producing high false alarms.
-  - The empirical ablation disproves this claim: when class weighting is disabled, Logistic Regression's false positive rate plummets to $0.144\%$, comfortably passing under our $\le 0.50\%$ alert fatigue limit.
-  - Therefore, the high false alarm rate was **primarily driven by the balanced class weighting**, which forces the hyperplane deep into normal traffic space to capture extreme minority points.
-  - However, unweighted training degrades minority attack detection across the board. Most severely, for `M4_lgbm`, disabling class weights causes catastrophic collapse: Macro-F1 plummets from $0.9563$ down to **$0.3673$**, with `U2R` recall dropping to **$0.00\%$** (completely undetected) and `R2L` recall falling to $15.95\%$. Cost-sensitive weighting is strictly indispensable for gradient boosting.
+#### Finding 36 (CORRECTS Entry 8): What Actually Drives Logistic Regression's False Positive Rate & Cost-Sensitive Ablation Diagnostic (Experiment A)
+- **What & Comparative Results:**
+  - `M1_logreg`:
+    - Weight ON: Macro-F1 $= 0.7702$, FPR $= 0.01810$ ($1.810\%$), R2L recall $= 98.00\%$, U2R recall $= 78.89\%$.
+    - Weight OFF: Macro-F1 $= 0.8826$, FPR $= 0.00144$ ($0.144\%$), R2L recall $= 87.48\%$, U2R recall $= 47.78\%$.
+    - U2R recall drops by $31.11$ percentage points when weights are removed, while precision rises from $18.36\%$ to $69.62\%$.
+  - `M2_tree` (Decision Tree Unweighted):
+    - Weight ON $\rightarrow$ OFF: Macro-F1 drops from $0.9122 \rightarrow 0.8797$; FPR drops from $0.164\% \rightarrow 0.067\%$.
+    - Rare-class recall: R2L recall changes from $94.99\% \rightarrow 94.11\%$; U2R recall drops from $69.17\% \rightarrow 38.06\%$ ($-31.11$ points).
+  - `M3_rf` (Random Forest Unweighted):
+    - Weight ON $\rightarrow$ OFF: Macro-F1 drops from $0.9498 \rightarrow 0.9098$; FPR drops from $0.036\% \rightarrow 0.013\%$.
+    - Rare-class recall: R2L recall changes from $96.24\% \rightarrow 93.36\%$; U2R recall drops from $78.89\% \rightarrow 45.00\%$ ($-33.89$ points).
+  - `M4_lgbm` (LightGBM Unweighted Diagnostic):
+    - 5-Fold CV metrics: Macro-F1 collapsed to **$0.3673$**, FPR rose to $7.345\%$, R2L recall collapsed to $15.95\%$, U2R recall collapsed to $0.00\%$.
+    - *Diagnostic Audit on Fold 0 Run*:
+      - `params_diff(pipe_on, pipe_off)`: Evaluated estimator diffs — only `clf__class_weight` differed (`'balanced'` vs. `None`). Pipeline structure, transformers, and column ordering were completely identical.
+      - Fitted tree count: `pipe[-1].booster_.num_trees() == 1020` (all 300 boosting stages fitted without early termination).
+      - Warnings during fit/predict: `0`.
+      - Fold 0 Per-Class F1 Breakdown:
+        - `f1_Normal`: $0.9410$ (recall: $96.02\%$, precision: $92.26\%$)
+        - `f1_DoS`: $0.8907$ (recall: $80.78\%$, precision: $99.24\%$)
+        - `f1_Probe`: $0.0027$ (recall: $0.59\%$, precision: $0.18\%$)
+        - `f1_R2L`: $0.0000$ (recall: $0.00\%$)
+        - `f1_U2R`: $0.0000$ (recall: $0.00\%$)
+        - Sum of per-class F1: $0.9410 + 0.8907 + 0.0027 + 0 + 0 = 1.8344 \implies \text{Macro-F1} = 1.8344 / 5 = 0.3669$.
+      - Fold 0 Confusion Matrix:
+        ```
+                     pred_Normal  pred_DoS  pred_Probe  pred_R2L  pred_U2R
+        true_Normal        13494        19         248       292         0
+        true_DoS             662      7054         891       115        10
+        true_Probe           303        35           2         0         0
+        true_R2L             160         0           0         0         0
+        true_U2R               9         0           0         0         0
+        ```
+      - *Root Cause Analysis*: Without balanced sample weights, LightGBM's default multiclass cross-entropy loss and leaf-wise splitting allowed massive leakage across classes: 662 DoS rows leaked into Normal, 891 DoS rows were misclassified as Probe, and 292 Normal rows were misclassified as R2L (driving false alarms up to 7.35%). Both Normal and DoS F1 scores degraded substantially (down from $0.999+$ to $0.941$ and $0.891$), explaining why the sum of F1 scores collapsed to ~1.84.
+- **Why It Matters & Scientific Stance:**
+  - Entry 8 originally conjectured that linear boundaries fundamentally cannot separate Normal traffic from attacks without high FPR. The empirical ablation disproves this: unweighted Logistic Regression achieved an FPR of $0.144\%$, comfortably clearing the $\le 0.50\%$ alert-fatigue barrier. The $1.81\%$ FPR was primarily driven by balanced class weighting forcing the decision boundary deep into Normal traffic space.
+  - The decision to keep weights ON across all models remains well-founded: unweighted training severely degrades minority attack recall across every single model family (LR U2R recall fell 31.1 points, Tree fell 31.1 points, RF fell 33.9 points).
+  - However, we refrain from claiming that class weighting is "strictly indispensable for gradient boosting" in general until this behavior is tested across alternative learning rates, loss formulations, and objective functions during Phase 16 tuning.
 
 #### Finding 37: Engineered-Features Ablation Decision (Experiment B)
 - **What:**
@@ -374,16 +433,20 @@ This log records our actual development journey, empirical observations, failure
     1. The mean Macro-F1 gain across M1–M4 is positive ($> 0$).
     2. No single model's Macro-F1 drops by more than its own fold standard deviation.
   - Empirical 5-fold cross-validation results:
-    - `M1_logreg`: Macro-F1 off $= 0.7702$, on $= 0.7744$ ($\Delta = \mathbf{+0.0042}$, fold SD $= 0.0043$; drop $>$ SD: False)
-    - `M2_tree`: Macro-F1 off $= 0.9122$, on $= 0.9182$ ($\Delta = \mathbf{+0.0060}$, fold SD $= 0.0158$; drop $>$ SD: False)
-    - `M3_rf`: Macro-F1 off $= 0.9498$, on $= 0.9574$ ($\Delta = \mathbf{+0.0076}$, fold SD $= 0.0157$; drop $>$ SD: False)
-    - `M4_lgbm`: Macro-F1 off $= 0.9563$, on $= 0.9602$ ($\Delta = \mathbf{+0.0038}$, fold SD $= 0.0249$; drop $>$ SD: False)
+    - `M1_logreg`: Macro-F1 off $= 0.7702$, on $= 0.7744$ ($\Delta = +0.0042$, fold SD $= 0.0043$; drop $>$ SD: False; paired wins: 4/5)
+    - `M2_tree`: Macro-F1 off $= 0.9122$, on $= 0.9182$ ($\Delta = +0.0060$, fold SD $= 0.0158$; drop $>$ SD: False; paired wins: 3/5)
+    - `M3_rf`: Macro-F1 off $= 0.9498$, on $= 0.9574$ ($\Delta = +0.0076$, fold SD $= 0.0157$; drop $>$ SD: False; paired wins: 5/5)
+    - `M4_lgbm`: Macro-F1 off $= 0.9563$, on $= 0.9602$ ($\Delta = +0.0038$, fold SD $= 0.0249$; drop $>$ SD: False; paired wins: 4/5)
   - Mean Macro-F1 gain across M1–M4: **$+0.0054$**.
-  - Any model dropped $>$ fold SD: **False** (all 4 models achieved positive gains).
+  - Any model dropped $>$ fold SD: **False** (all 4 models achieved positive mean gains).
   - Decision: **`USE_ENGINEERED = True` is officially ADOPTED**.
-- **Why It Matters:**
-  - This decision strictly honors the pre-registered protocol rather than post-hoc cherry-picking.
-  - Row-wise domain features (`log_src_bytes`, `bytes_ratio`, `content_activity`, `privilege_flag`) enrich representations for both linear boundaries and orthogonal tree splits without introducing data leakage.
+- **Why It Matters & Empirical Assessment:**
+  - Every individual model gain ($+0.0038$ to $+0.0076$) is smaller than its corresponding fold standard deviation ($\sigma \approx 0.004$ to $0.025$). Across the models, these gains represent **no measurable benefit beyond fold noise**.
+  - Saying that the features "enrich representations" is an overclaim given these marginal increments.
+  - The 4 engineered features (`bytes_ratio`, `zero_payload`, `content_activity`, `privilege_flag` — note that `log_src_bytes` is a transformer inside `ColumnTransformer`, not an engineered feature) are adopted strictly because:
+    1. The pre-registered formal adoption rule was satisfied;
+    2. Computational overhead is nil;
+    3. Row-wise computation has mathematically proven zero information leakage.
 
 #### Finding 38: Frozen Global Settings
 - **What:**
@@ -407,7 +470,7 @@ This log records our actual development journey, empirical observations, failure
   - **Wilson 95% Score Confidence Intervals:** Computed exact Wilson score intervals (`scipy.stats.binomtest`) to properly quantify binomial uncertainty on small attack populations ($n \le 44$).
 - **Key Empirical Discoveries & Results:**
   1. **Pooled Out-of-Fold Confusion Matrix (Figure `p15_confusion_pooled.png`):**
-     - `Normal`, `DoS`, and `Probe` remain virtually perfect ($>99.5\%$ recall/precision across all tree models).
+     - `Normal` and `DoS` remain virtually perfect ($>99.8\%$ recall across all three tree models). For `Probe`, M3 and M4 achieve $>99.3\%$ recall ($99.35\%$ and $99.47\%$), while Decision Tree M2 achieves $98.59\%$ (tree Probe recall is not uniformly $>99.5\%$).
      - `R2L` ($N=799$ total): LightGBM M4 achieves **$98.25\%$** pooled recall ($785/799$ detected; only 14 misses). Random Forest M3 achieves $96.99\%$ ($775/799$).
      - `U2R` ($N=42$ total): LightGBM M4 achieves **$80.95\%$** pooled recall ($34/42$ detected; 8 misses). Random Forest M3 detects $33/42$ ($78.57\%$). Decision Tree M2 detects $29/42$ ($69.05\%$).
   2. **Per-Attack Subtype Breakdown & Wilson 95% CIs:**
@@ -430,7 +493,7 @@ This log records our actual development journey, empirical observations, failure
        - M4 misses 14 rows: **$10$ went to Normal ($71\%$)**, $3$ to U2R, $1$ to DoS.
        - M3 misses 24 rows: **$19$ went to Normal ($79\%$)**, $4$ to U2R, $1$ to DoS.
      - **Core IDS Insight:** Missed intrusions almost universally blend into **Normal traffic** ($71\%\text{--}89\%$ of misses). Attackers do not trigger traffic-flood anomalies; they blend into baseline interactive user behavior.
-  4. **Caught vs. Missed U2R Feature Profiles:**
+  4. **Caught vs. Missed U2R Feature Profiles (LightGBM M4, $n=34$ caught vs. $n=8$ missed):**
      - Caught U2R sessions have elevated `hot` indicators (mean $1.65$ vs. $0.62$ in missed, and $0.05$ in Normal), `num_root` (mean $1.00$ vs. $0.00$ in missed), and larger payloads (`dst_bytes` mean $5,981$ vs. $1,278$).
      - Missed U2R sessions exhibit zero `num_root` and small byte transfers, avoiding anomalous payload triggers.
   5. **False Positive Anatomy (Normal Connections Flagged as Attack):**
@@ -440,7 +503,9 @@ This log records our actual development journey, empirical observations, failure
      - **Top Services Contributing to False Positives:**
        - `telnet`: 6/19 ($31.6\%$) in M4; 5/17 ($29.4\%$) in M3.
        - `ftp_data`: 5/19 ($26.3\%$) in M4; 9/17 ($52.9\%$) in M3.
-     - **Top TCP Flag:** `SF` (normal established connection) accounts for $\sim 74\%$ of all false positives.
+     - **TCP Flag Distribution & Baseline Context:**
+       - `SF` (normal established connection) accounts for $\sim 74\%$ of all false positives ($14/19$ in M4; $12/17$ in M3).
+       - *Baseline Prevalence Context*: In baseline Normal traffic, $66,384$ out of $70,264$ connections (**$94.48\%$**) have `flag == 'SF'`. Thus, the $74\%$ SF share among false alarms is actually **under-represented** relative to baseline Normal traffic. In contrast, non-SF flags (`REJ`, `RSTO`) make up only $5.52\%$ of Normal traffic but represent $\sim 26\%$ of false alarms, indicating that abnormal session terminations disproportionately trigger false alerts.
      - **Operational Context:** Administrative interactive logins (`telnet`) and bulk file transfers (`ftp_data`) closely resemble unauthorized privilege escalations and FTP abuse (`warezclient`), serving as the primary source of enterprise alert noise.
   6. **Tree Leaf Memorization Verified:**
      - Decision Tree M2 placed the 42 U2R instances into **9 separate leaves**, with 6 leaves holding only 2 to 3 samples total, validating that unconstrained CART isolates extreme minority points into bespoke memorization pockets.

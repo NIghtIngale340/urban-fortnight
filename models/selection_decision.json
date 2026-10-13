@@ -1,0 +1,18 @@
+{
+  "winner": "M4_lgbm",
+  "step": "tie-break (a) R2L+U2R recall",
+  "runner_up": "M3_rf",
+  "gap": 0.0070846507241731915,
+  "pooled_sd": 0.01454328922442585,
+  "discarded": [
+    "M1_logreg"
+  ],
+  "chosen_config": {
+    "M0_dummy": "default",
+    "M1_logreg": "tuned",
+    "M2_tree": "default",
+    "M3_rf": "default",
+    "M4_lgbm": "default"
+  },
+  "timestamp": "2026-10-13T21:32:34.094356"
+}

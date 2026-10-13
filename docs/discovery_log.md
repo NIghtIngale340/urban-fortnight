@@ -551,3 +551,53 @@ This log records our actual development journey, empirical observations, failure
   - Tuned vs. default summary: `reports/metrics/tuned_vs_default_inner.csv`
   - Exported parameters: `models/best_params.json`
 
+---
+
+### Entry 16: Repeated 5×3 Cross-Validation, Tuning Sign Test & Definitive Model Selection (Phase 17)
+- **Date:** October 13, 2026
+- **Question Raised:** Using 5×3 Repeated Stratified Cross-Validation (15 folds) on training data only, does hyperparameter tuning justify model replacement under the pre-registered 12-of-15 sign test, which model architecture survives the 0.5% FPR operational gate, and which candidate emerges as the champion under our pre-registered model selection protocol?
+
+#### Finding 44: The Selection Decision
+- **What:**
+  - Evaluated on 5×3 repeated CV (15 folds on $N=116,466$):
+    - `M0_dummy`: Macro-F1 $= 0.1505 \pm 0.0000$, FPR $= 0.0000$ (Passes FPR gate; 100% attack misses).
+    - `M1_logreg` (tuned): Macro-F1 $= 0.8071 \pm 0.0155$, FPR $= 0.0141$ ($1.411\%$) $\rightarrow$ **DISCARDED by FPR gate** ($> 0.0050$, exceeding operational alert fatigue threshold by $2.8\times$).
+    - `M2_tree` (default): Macro-F1 $= 0.9183 \pm 0.0183$, FPR $= 0.0012$ ($0.121\%$) (Passes FPR gate).
+    - `M3_rf` (default): Macro-F1 $= 0.9535 \pm 0.0136$, FPR $= 0.000256$ ($0.0256\%$) (Passes FPR gate).
+    - `M4_lgbm` (default): Macro-F1 $= \mathbf{0.9606 \pm 0.0155}$, FPR $= 0.000256$ ($0.0256\%$) (Passes FPR gate).
+  - Top vs. Runner-Up: `M4_lgbm` ($0.9606$) vs. `M3_rf` ($0.9535$).
+    - Macro-F1 gap: $\Delta = 0.0071$ ($0.71$ percentage points).
+    - Pooled fold standard deviation: $\sigma_{\text{pooled}} = 0.0145$.
+    - Since $|\Delta| < \sigma_{\text{pooled}}$, M3 and M4 are declared a **statistical tie** under Step 3 of the pre-registered selection rule.
+  - **Tie-Break Evaluation:**
+    - Criterion (a) Combined Rare-Class Recall ($\text{Recall}_{\text{R2L}} + \text{Recall}_{\text{U2R}}$):
+      - `M4_lgbm`: $0.9821 + 0.8176 = \mathbf{1.7997}$ ($179.97\%$).
+      - `M3_rf`: $0.9695 + 0.7787 = 1.7482$ ($174.82\%$).
+      - **Winner:** **`M4_lgbm` (LightGBM)** wins on tie-break (a) by $+5.15$ percentage points!
+    - Decided by: `tie-break (a) R2L+U2R recall`.
+    - Runner-up: `M3_rf`.
+    - Discarded by FPR gate: `['M1_logreg']`.
+- **Why It Matters:** 15 folds across 3 repeats provide far steadier variance estimates than a single 5-fold split. The decision adhered strictly to the pre-registered protocol locked before seeing results.
+
+#### Finding 45: Tie-Break Fragility & Empirical Honesty
+- **What:**
+  - The tie-break margin rests on a very small number of physical instances:
+    - On U2R ($N=42$ per repeat): M4 detected $81.76\%$ ($\sim 34.3$ rows) vs. M3's $77.87\%$ ($\sim 32.7$ rows) $\rightarrow$ a margin of only **$\approx 1.6$ U2R connections** per repeat (out of 116,466 total traffic).
+    - On R2L ($N=799$ per repeat): M4 detected $98.21\%$ ($\sim 784.7$ rows) vs. M3's $96.95\%$ ($\sim 774.6$ rows) $\rightarrow$ a margin of **$\approx 10.1$ R2L connections** per repeat.
+    - On False Positive Rate: Both models produced an identical FPR of $0.0256\%$ (~18 false alarms out of 70,264 Normal connections per repeat), differing by less than $0.001$ false alarms per fold.
+- **Why It Matters:** While `M4_lgbm` legitimately wins under our formal rules, intellectual honesty requires documenting that the separation between Random Forest and LightGBM is not an insurmountable chasm, but a narrow margin of $\sim 12$ rare intrusion packets in a dataset of over 116,000 instances.
+
+#### Finding 46: Tuning Payoff & Parsimony (Sign Test Results)
+- **What:**
+  - Tuned replaced default for **only 1 model (`M1_logreg`)**: won 15/15 folds ($p = 0.0000$), lifting 15-fold Macro-F1 from $0.7740 \rightarrow 0.8071$ ($+3.31$ points).
+  - Kept default for all tree architectures:
+    - `M2_tree`: tuned won 9/15 folds ($p = 0.304$) $\rightarrow$ kept default.
+    - `M3_rf`: tuned won 11/15 folds ($p = 0.059$) $\rightarrow$ missed the 12/15 threshold by 1 fold, kept default.
+    - `M4_lgbm`: tuned won 9/15 folds ($p = 0.304$) $\rightarrow$ kept default.
+  - Final selected model configurations: `M0_dummy`: default, `M1_logreg`: tuned, `M2_tree`: default, `M3_rf`: default, `M4_lgbm`: default.
+- **Why It Matters:** Confirms the finding from Phase 16 that tree ensemble default settings were already operating close to Bayes optimal on this dataset. Enforcing the strict 12/15 sign-test threshold prevented adopting over-complex tuned configurations whose apparent gains were within fold noise.
+- **Artifacts Generated:**
+  - `reports/metrics/phase17_selection_summary.csv` (15-fold metrics summary)
+  - `models/selection_decision.json` (formal pre-registered decision record)
+
+

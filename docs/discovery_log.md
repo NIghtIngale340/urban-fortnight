@@ -396,3 +396,54 @@ This log records our actual development journey, empirical observations, failure
   - Class weight ablation metrics: `reports/metrics/ablation_class_weight.csv`
   - Feature engineering ablation metrics: `reports/metrics/ablation_engineered.csv`
   - Updated baseline fold results and out-of-fold predictions: `cv_results_{model}.csv` and `oof_{model}.npz` for M1–M4.
+
+---
+
+### Entry 14: Out-of-Fold Error Analysis, Rare-Class Breakdown, Wilson CIs & False Positive Anatomy (Phase 15)
+- **Date:** October 13, 2026
+- **Question Raised:** When examining pooled out-of-fold predictions on all 116,466 training samples, which specific rare attack subtypes (`U2R`: `buffer_overflow`, `loadmodule`, `rootkit`, `perl`; `R2L`: `warezclient`, `guess_passwd`, `warezmaster`, `imap`, `ftp_write`, `multihop`, `phf`, `spy`) are caught vs. missed, where do missed attacks go, and what network services drive false alarms on Normal traffic?
+- **Methodology & Alignment Verification:**
+  - **Positional Alignment Verified:** Proved `(meta_train.map(ATTACK_TO_FAMILY).values == y_train.values).all()`. Out-of-fold predictions strictly align $1:1$ with feature records and attack metadata labels.
+  - **Wilson 95% Score Confidence Intervals:** Computed exact Wilson score intervals (`scipy.stats.binomtest`) to properly quantify binomial uncertainty on small attack populations ($n \le 44$).
+- **Key Empirical Discoveries & Results:**
+  1. **Pooled Out-of-Fold Confusion Matrix (Figure `p15_confusion_pooled.png`):**
+     - `Normal`, `DoS`, and `Probe` remain virtually perfect ($>99.5\%$ recall/precision across all tree models).
+     - `R2L` ($N=799$ total): LightGBM M4 achieves **$98.25\%$** pooled recall ($785/799$ detected; only 14 misses). Random Forest M3 achieves $96.99\%$ ($775/799$).
+     - `U2R` ($N=42$ total): LightGBM M4 achieves **$80.95\%$** pooled recall ($34/42$ detected; 8 misses). Random Forest M3 detects $33/42$ ($78.57\%$). Decision Tree M2 detects $29/42$ ($69.05\%$).
+  2. **Per-Attack Subtype Breakdown & Wilson 95% CIs:**
+     - **U2R Attacks:**
+       - `buffer_overflow` ($n=23$): M4 catches $21/23$ ($91.3\%$, 95% CI: $[73.2\%, 97.6\%]$); M3 catches $22/23$ ($95.7\%$).
+       - `loadmodule` ($n=8$): M4 catches $6/8$ ($75.0\%$, 95% CI: $[40.9\%, 92.9\%]$); M3 catches $5/8$ ($62.5\%$).
+       - `rootkit` ($n=8$): M4 catches $4/8$ ($50.0\%$, 95% CI: $[21.5\%, 78.5\%]$); M3 catches $3/8$ ($37.5\%$). Rootkits evade detection by mimicking legitimate admin sessions.
+       - `perl` ($n=3$): Both M3 and M4 achieve $3/3$ ($100.0\%$, 95% CI: $[43.9\%, 100.0\%]$).
+     - **R2L Attacks:**
+       - `warezclient` ($n=715$, majority R2L): M4 catches **$714/715$** ($99.86\%$, 95% CI: $[99.2\%, 99.98\%]$); M3 catches $709/715$ ($99.16\%$).
+       - `guess_passwd` ($n=44$): Both M3 and M4 catch $43/44$ ($97.73\%$, 95% CI: $[88.2\%, 99.6\%]$).
+       - `warezmaster` ($n=13$): Both catch $10/13$ ($76.9\%$, 95% CI: $[49.7\%, 91.8\%]$).
+       - Rare R2L ($n \le 9$): `imap` ($7/9$ on M4), `multihop` ($4/6$ on M4), `ftp_write` ($3/7$ on M4), `phf` ($3/3$ on M4), `spy` ($1/2$ on M4).
+  3. **Missed Destinations Analysis (Where Misses Go):**
+     - For U2R:
+       - M4 misses 8 rows: **$6$ went to Normal ($75\%$)**, $1$ to R2L, $1$ to Probe.
+       - M3 misses 9 rows: **$8$ went to Normal ($89\%$)**, $1$ to Probe.
+       - M2 misses 13 rows: **$8$ went to Normal ($62\%$)**, $4$ to R2L, $1$ to Probe.
+     - For R2L:
+       - M4 misses 14 rows: **$10$ went to Normal ($71\%$)**, $3$ to U2R, $1$ to DoS.
+       - M3 misses 24 rows: **$19$ went to Normal ($79\%$)**, $4$ to U2R, $1$ to DoS.
+     - **Core IDS Insight:** Missed intrusions almost universally blend into **Normal traffic** ($71\%\text{--}89\%$ of misses). Attackers do not trigger traffic-flood anomalies; they blend into baseline interactive user behavior.
+  4. **Caught vs. Missed U2R Feature Profiles:**
+     - Caught U2R sessions have elevated `hot` indicators (mean $1.65$ vs. $0.62$ in missed, and $0.05$ in Normal), `num_root` (mean $1.00$ vs. $0.00$ in missed), and larger payloads (`dst_bytes` mean $5,981$ vs. $1,278$).
+     - Missed U2R sessions exhibit zero `num_root` and small byte transfers, avoiding anomalous payload triggers.
+  5. **False Positive Anatomy (Normal Connections Flagged as Attack):**
+     - Total false positives out of 70,264 Normal connections:
+       - M3 RF: only **17 false alarms** ($0.0242\%$).
+       - M4 LightGBM: only **19 false alarms** ($0.0270\%$).
+     - **Top Services Contributing to False Positives:**
+       - `telnet`: 6/19 ($31.6\%$) in M4; 5/17 ($29.4\%$) in M3.
+       - `ftp_data`: 5/19 ($26.3\%$) in M4; 9/17 ($52.9\%$) in M3.
+     - **Top TCP Flag:** `SF` (normal established connection) accounts for $\sim 74\%$ of all false positives.
+     - **Operational Context:** Administrative interactive logins (`telnet`) and bulk file transfers (`ftp_data`) closely resemble unauthorized privilege escalations and FTP abuse (`warezclient`), serving as the primary source of enterprise alert noise.
+  6. **Tree Leaf Memorization Verified:**
+     - Decision Tree M2 placed the 42 U2R instances into **9 separate leaves**, with 6 leaves holding only 2 to 3 samples total, validating that unconstrained CART isolates extreme minority points into bespoke memorization pockets.
+- **Artifacts Generated:**
+  - Figure: `reports/figures/p15_confusion_pooled.png`
+  - Per-attack metric tables: `reports/metrics/p15_per_attack_{model}_{family}.csv` for all 4 models and both rare families.

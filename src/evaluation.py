@@ -12,6 +12,7 @@ from sklearn.metrics import (
     f1_score,
 )
 from src.config import SEED, FAMILIES, METRICS_DIR
+from scipy.stats import binomtest
 
 from sklearn.model_selection import StratifiedKFold
 
@@ -163,3 +164,56 @@ def paired_diff(a: pd.DataFrame, b: pd.DataFrame, metric: str) -> dict:
         "ties": int((deltas == 0).sum()),
         "n_folds": len(deltas),
     }
+
+
+def wilson_ci(k: int, n: int, conf: float = 0.95):
+    if n == 0:
+        return (np.nan, np.nan)
+    res = binomtest(int(k), int(n))
+    ci = res.proportion_ci(confidence_level=conf, method="wilson")
+    return float(ci.low), float(ci.high)
+
+
+def per_attack_recall(meta_attack, y_pred, family, attack_to_family):
+    meta = np.asarray(meta_attack)
+    y_pred = np.asarray(y_pred)
+    attacks = [a for a, f in attack_to_family.items() if f == family and a != "normal"]
+
+    rows = []
+    for attack in attacks:
+        mask = meta == attack
+        n = int(mask.sum())
+        if n == 0:
+            continue
+        k = int((y_pred[mask] == family).sum())
+        lo, hi = wilson_ci(k, n)
+        wrong = y_pred[mask][y_pred[mask] != family]
+        most_wrong = pd.Series(wrong).value_counts().idxmax() if len(wrong) else "-"
+        rows.append({"attack": attack, "family": family, "n": n, "k_correct": k,
+                     "recall": k / n, "ci_low": lo, "ci_high": hi,
+                     "most_common_wrong": most_wrong})
+    return pd.DataFrame(rows).sort_values("n", ascending=False).reset_index(drop=True)
+
+def missed_destinations(y_true_family, y_pred, family):
+    """Where rows of `family` that were MISSED got predicted instead."""
+    y_true_family = np.asarray(y_true_family)
+    y_pred = np.asarray(y_pred)
+    mask = (y_true_family == family) & (y_pred != family)
+    return pd.Series(y_pred[mask]).value_counts()
+
+
+def fp_breakdown(oof_pred, y_true_family, X, by=("service", "flag")):
+    """Break down false positives (true Normal predicted as attack) by categorical value."""
+    oof_pred = np.asarray(oof_pred)
+    y_true_family = np.asarray(y_true_family)
+    fp_mask = (y_true_family == "Normal") & (oof_pred != "Normal")
+    n_fp = int(fp_mask.sum())
+    X_fp = X.iloc[fp_mask]                      # positional alignment
+    frames = []
+    for col in by:
+        f = X_fp[col].value_counts().reset_index()
+        f.columns = [col, "n_fp"]
+        f["share_of_fp"] = f["n_fp"] / n_fp if n_fp else np.nan
+        f["by"] = col
+        frames.append(f)
+    return pd.concat(frames, ignore_index=True), n_fp

@@ -20,6 +20,10 @@ import numpy as np
 import pandas as pd
 from sklearn.pipeline import Pipeline
 
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from src.config import (ALERT_TAU, CATEGORICAL_COLS, CONSTANT_COLS, FAMILIES,
                         FEATURE_NAMES, MODELS_DIR)
 from src.evaluation import _reorder_proba_to_families, attack_score, decide

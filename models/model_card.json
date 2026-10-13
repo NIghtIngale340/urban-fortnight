@@ -1,6 +1,6 @@
 {
   "model_name": "Network Guardian IDS - final pipeline",
-  "created_utc": "2026-10-13T15:38:09.746491+00:00",
+  "created_utc": "2026-10-13T17:43:55.830515+00:00",
   "artifact": {
     "path": "models/final_pipeline.joblib",
     "build_command": "python scripts/train_final.py",
@@ -58,7 +58,7 @@
         "M3_rf": "default",
         "M4_lgbm": "default"
       },
-      "timestamp": "2026-10-13T21:32:34.094356"
+      "timestamp": "2026-10-14T01:33:32.314079"
     }
   },
   "frozen_settings": {
@@ -395,10 +395,10 @@
     }
   },
   "timing": {
-    "final_fit_seconds": 12.4,
-    "train_set_predict_ms_per_1k_rows": 13.374,
-    "cv_fit_seconds_mean": 10.4945120294006,
-    "cv_predict_seconds_per_1k_mean": 0.0123944082532034,
+    "final_fit_seconds": 8.69,
+    "train_set_predict_ms_per_1k_rows": 11.48,
+    "cv_fit_seconds_mean": 3.578622906002177,
+    "cv_predict_seconds_per_1k_mean": 0.0108966801674697,
     "machine": "Linux-7.1.13+parrot7-amd64-x86_64-with-glibc2.41"
   },
   "reproducibility_check": {

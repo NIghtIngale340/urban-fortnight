@@ -15,7 +15,7 @@ Developed for the **CCINSYSL (Introduction to Intelligent Systems)** course proj
 - **Key Empirical Results (Held-Out Test Set, $N=29,117$):**
   - **Attack Detection:** $99.98\%$ overall detection rate ($\text{FNR} = 0.0173\%$, cutting missed intrusions by $60\%$ over argmax).
   - **Rare-Class Sensitivity:** $90.0\%$ U2R recall ($9/10$, Wilson 95% CI: $[59.6\%, 98.2\%]$), $99.0\%$ R2L recall ($198/200$, Wilson 95% CI: $[96.4\%, 99.7\%]$).
-  - **False Alarm Control:** $0.1082\%$ false positive rate ($19$ false alarms among $17,567$ normal connections, well within the $0.50\%$ operational ceiling).
+  - **False Alarm Control:** $0.1082\%$ false positive rate ($19$ false alarms among $17,567$ normal connections; slightly above the $0.10\%$ target used to calibrate $\tau$ on training OOF data, and below the $0.50\%$ operational ceiling).
   - **Multi-Class Performance:** Macro-F1 $= 0.9543$ under argmax, $0.9201$ under the calibrated $\tau$ policy.
 
 ---
@@ -60,8 +60,9 @@ Developed for the **CCINSYSL (Introduction to Intelligent Systems)** course proj
 │   ├── metrics/                   # Tabular evaluation results, test metrics, and OOF arrays
 │   └── figures/                   # Visualizations and diagnostic plots
 ├── docs/
-│   └── discovery_log.md           # Engineering discovery log (Entries 1–18, Findings 1–53)
-├── Document.md                    # Course project formal documentation report
+│   └── discovery_log.md           # Engineering discovery log (Entries 1–18)
+├── Document.md                    # Course project formal documentation report (source)
+├── submission/                    # Report exports (DOCX, PDF, Overleaf LaTeX) and build script
 └── Project_Specs.md               # CCINSYSL course project specifications and rubrics
 ```
 
@@ -75,11 +76,14 @@ The project was executed across 20 structured phases adhering strictly to scient
 - **Phase 1: Raw File Inspection & Format Validation** (`notebooks/data_understanding.ipynb`) — Confirmed 41 feature columns plus target label; identified 2 constant columns (`num_outbound_cmds`, `is_host_login`).
 - **Phase 2: Schema Validation & Defensive Ingestion** (`src/data.py`, `src/validate.py`) — Enforced column types, non-negativity, $[0, 1]$ rate ranges, and dot-stripped attack labels.
 - **Phase 3: Label Harmonization & Deduplication** (`src/data.py`, `notebooks/data_preparation.ipynb`) — Mapped 23 raw attacks to 5 families; removed 348,435 exact duplicates and resolved 3 label conflict rows.
-- **Phase 4: Data Leakage Demonstration** (`notebooks/data_preparation.ipynb`) — Proved that random splitting on un-deduplicated data produces $73.5\%$ test contamination and a counterfeit $99.96\%$ accuracy.
+- **Phase 4: Data Leakage Demonstration** (`notebooks/data_preparation.ipynb`) — Showed that random splitting on un-deduplicated data puts copies of $73.5\%$ of test rows into training (raw-split accuracy $0.9997$ vs. $0.9988$ on the truly unseen rows), which makes the raw score an invalid estimate.
 - **Phase 5: Partitioning & Split Integrity Verification** (`src/validate.py`) — Constructed 80/20 stratified split ($N_{\text{train}}=116,466$, $N_{\text{test}}=29,117$); verified zero feature row overlap and locked test set.
 - **Phase 6: Train-Only Exploratory Data Analysis** (`notebooks/data_understanding.ipynb`) — Analyzed distributions, high skewness, heavy-tailed features, and protocol interactions strictly on training data.
 
 ### II. Preprocessing, Baselines & Candidate Modeling
+
+*Macro-F1 values in Phases 9–12 below are the final Phase 17 5x3 repeated-CV results under frozen settings (class weights + engineered features; M1 uses its tuned `C=10`). The original Phase 9–12 baseline values are in `reports/metrics/comparison_cv.csv`.*
+
 - **Phase 7: Preprocessing Pipeline Encapsulation** (`src/preprocessing.py`) — Built leak-free column transformers with one-hot encoding for categoricals and passthrough for tree numericals.
 - **Phase 8: Evaluation Harness & Dummy Baseline** (`src/evaluation.py`, `notebooks/modeling.ipynb`) — Implemented Macro-F1, binary FPR/FNR, and validated sanity floor (`M0_dummy`: Macro-F1 $= 0.1505$).
 - **Phase 9: Linear Baseline (`M1_logreg`)** (`src/models.py`) — Logistic Regression with standard scaling and balanced class weights (Macro-F1 $= 0.8071$).
@@ -89,7 +93,7 @@ The project was executed across 20 structured phases adhering strictly to scient
 - **Phase 13: 5-Fold Cross-Validation Model Comparison** (`notebooks/modeling.ipynb`) — Comparative benchmarking establishing ensemble dominance.
 
 ### III. Ablations, Optimization & Selection
-- **Phase 14: Controlled Ablation Studies** (`notebooks/modeling.ipynb`) — Tested class weighting ($+0.1652$ mean gain on minority recall) and 4 interaction features ($+0.0054$ mean Macro-F1 gain, 0 regressions); adopted both globally.
+- **Phase 14: Controlled Ablation Studies** (`notebooks/modeling.ipynb`) — Tested class weighting (raised U2R recall by $31$–$34$ points for M1–M3; unweighted LightGBM collapsed to Macro-F1 $0.3673$) and 4 interaction features ($+0.0054$ mean Macro-F1 gain, within fold noise, 0 regressions beyond fold SD); adopted both globally under pre-registered rules.
 - **Phase 15: Rare-Class Diagnostic Breakdown** (`notebooks/rare_class_analysis.ipynb`) — Dissected R2L/U2R confusion matrix and per-attack Wilson 95% confidence intervals on out-of-fold predictions.
 - **Phase 16: Equal-Budget Hyperparameter Tuning** (`src/train.py`) — Randomized search across all 4 architectures with pre-registered iteration budgets and 3-fold inner CV.
 - **Phase 17: Pre-Registered Repeated Cross-Validation & Decision** (`src/evaluation.py`, `models/selection_decision.json`) — 5x3 repeated stratified CV with strict sign tests. Selected **`M4_lgbm` (default configuration)** via rare-class recall tie-break over `M3_rf`.
@@ -100,7 +104,7 @@ The project was executed across 20 structured phases adhering strictly to scient
 
 ### V. Productionization & Code Freeze
 - **Phase 20: Productionization, Inference Module, Model Card & Code Freeze** — Built `src/predict.py` (single/batch inference with schema validation), `scripts/train_final.py` (deterministic refitting), `models/model_card.json`, and 14 passing automated unit tests (`tests/test_predict.py`). Formal coding freeze declared.
-- *(Note on Isolation Forest: Evaluated as optional exploratory work in the project specifications; excluded from the primary supervised pipeline in favor of the calibrated threshold ensemble).*
+- *(Note on Isolation Forest: an optional side experiment suggested in the planning notes (`new.md`); it is not a course requirement and was not carried out.)*
 
 ---
 
@@ -216,11 +220,12 @@ In accordance with version control best practices for open-source repositories:
 
 | Deliverable | File Path | Description |
 | :--- | :--- | :--- |
-| **Final Documentation** | [`Document.md`](file:///home/nightingale/My_Projects/is_project/Document.md) | Course project formal documentation report |
-| **Discovery Log** | [`docs/discovery_log.md`](file:///home/nightingale/My_Projects/is_project/docs/discovery_log.md) | Chronological log of 53 empirical research findings across 18 entries |
-| **Model Card** | [`models/model_card.json`](file:///home/nightingale/My_Projects/is_project/models/model_card.json) | Comprehensive schema, architecture, and verified metrics specification |
-| **Selection Decision** | [`models/selection_decision.json`](file:///home/nightingale/My_Projects/is_project/models/selection_decision.json) | Pre-registered repeated-CV statistical selection record |
-| **Final Test Metrics** | [`reports/metrics/test_results.json`](file:///home/nightingale/My_Projects/is_project/reports/metrics/test_results.json) | Frozen single-pass held-out test evaluation results |
-| **Policy Comparison** | [`reports/metrics/operational_policy_comparison.csv`](file:///home/nightingale/My_Projects/is_project/reports/metrics/operational_policy_comparison.csv) | Argmax vs Calibrated $\tau$ test trade-off metrics |
-| **Generalization Gaps** | [`reports/metrics/test_gap_table.csv`](file:///home/nightingale/My_Projects/is_project/reports/metrics/test_gap_table.csv) | Consistent Train vs CV vs Test generalization analysis |
-| **Diagnostic Figures** | [`reports/figures/`](file:///home/nightingale/My_Projects/is_project/reports/figures/) | 22 high-resolution diagnostic plots and learning curves |
+| **Final Documentation** | [`Document.md`](Document.md) | Course project formal documentation report (source) |
+| **Report Exports** | [`submission/`](submission/) | DOCX, PDF and Overleaf LaTeX versions; rebuild with `bash submission/build/build.sh` |
+| **Discovery Log** | [`docs/discovery_log.md`](docs/discovery_log.md) | Chronological log of the development journey (18 entries) |
+| **Model Card** | [`models/model_card.json`](models/model_card.json) | Comprehensive schema, architecture, and verified metrics specification |
+| **Selection Decision** | [`models/selection_decision.json`](models/selection_decision.json) | Pre-registered repeated-CV statistical selection record |
+| **Final Test Metrics** | [`reports/metrics/test_results.json`](reports/metrics/test_results.json) | Frozen single-pass held-out test evaluation results |
+| **Policy Comparison** | [`reports/metrics/operational_policy_comparison.csv`](reports/metrics/operational_policy_comparison.csv) | Argmax vs Calibrated $\tau$ test trade-off metrics |
+| **Generalization Gaps** | [`reports/metrics/test_gap_table.csv`](reports/metrics/test_gap_table.csv) | Consistent Train vs CV vs Test generalization analysis |
+| **Diagnostic Figures** | [`reports/figures/`](reports/figures/) | 19 diagnostic plots and learning curves |

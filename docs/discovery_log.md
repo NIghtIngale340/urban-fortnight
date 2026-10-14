@@ -91,7 +91,7 @@ This log records our actual development journey, empirical observations, failure
      - *Decision:* Keep all correlated features for tree models (trees split on thresholds internally), but use permutation importance rather than MDI to avoid splitting credit.
   4. **Zero-Inflation & Host Content Discriminators:**
      - Content features (`urgent`, `su_attempted`, `num_shells`, `root_shell`, `num_failed_logins`) are >99.9% zeros across the general population.
-     - However, non-zero values are almost exclusively concentrated in **R2L and U2R** (e.g. `hot` is non-zero in 43.1% of R2L and 57.1% of U2R; `root_shell` is non-zero in 11.9% of U2R).
+     - However, non-zero values are almost exclusively concentrated in **R2L and U2R** (e.g. `hot` is non-zero in 43.1% of R2L and 57.1% of U2R; `root_shell` is non-zero in 52.4% of U2R; *[Corrected 2026-10-14 against notebook output: an earlier version said 11.9%, which is the `num_shells` figure.]*).
   5. **Feature-to-Family Discriminative Separation:**
      - **DoS and Probe** are distinguished by *traffic-window features* (`count`, `srv_count`, `serror_rate`).
      - **R2L and U2R** are distinguished by *host content features* (`hot`, `num_root`, `num_file_creations`, `num_failed_logins`).
@@ -206,7 +206,7 @@ This log records our actual development journey, empirical observations, failure
      - **Operational Compliance:** $0.16\%$ comfortably clears the $\le 0.50\%$ enterprise false alarm ceiling. In a 1,000,000 requests/day environment, daily false alarms drop from ~18,100 down to ~1,600 (a **91.2% reduction in false alert fatigue**).
      - **Binary FNR:** $0.0015 \pm 0.0004$ ($0.15\%$).
      - **Accuracy:** $0.9983 \pm 0.0001$ ($99.83\%$).
-     - **Fit Latency:** Rapid training at **$1.21$s per fold** (vs. ~50.1s for Logistic Regression).
+     - **Fit Latency:** Rapid training at **$0.79$–$0.81$ s per fold** (vs. ~48.6 s for Logistic Regression). *[Corrected 2026-10-14 against notebook output: earlier text said 1.21 s and ~50.1 s; saved outputs show 0.79–0.81 s and 48.63 s.]*
   2. **Per-Class Performance:**
      - `Normal`: Recall $99.84\%$, F1 $0.9987$
      - `DoS`: Recall $99.97\%$, F1 $0.9997$
@@ -279,7 +279,7 @@ This log records our actual development journey, empirical observations, failure
      - As $B$ increases, CV Macro-F1 rises from $0.9452$ ($B=25$) to $0.9542$ ($B=100$), and hovers between $0.950$ and $0.954$ through $B=300$. These fluctuations ($0.950\text{--}0.954$) reflect fold noise ($\sigma \approx 0.0157$) rather than a true plateau or decay.
      - Unlike single unpruned trees, increasing the number of bagging trees does not induce catastrophic generalization error, consistent with Breiman's Law of Large Numbers for Random Forests.
   6. **Inference Latency:**
-     - Batch inference throughput: $47.5$ ms per 1,000 connections (evaluated in batch mode, not single-record pipeline latency), corresponding to $>21,000$ records/sec in batch processing mode.
+     - Batch inference throughput: $44.5$ ms per 1,000 connections (*[Corrected 2026-10-14 against notebook output: earlier text said 47.5 ms; notebook shows 44.5 ms with `n_jobs=1`.]*) (evaluated in batch mode, not single-record pipeline latency), corresponding to $>21,000$ records/sec in batch processing mode.
 - **Artifacts Generated:**
   - Fold metrics: `reports/metrics/cv_results_M3_rf.csv`
   - OOF predictions & probabilities: `reports/metrics/oof_M3_rf.npz`
@@ -324,7 +324,7 @@ This log records our actual development journey, empirical observations, failure
      - However, validation Macro-F1 monotonically rises and stabilizes: $0.9375$ ($k=50$) $\rightarrow 0.9433$ ($k=100$) $\rightarrow 0.9592$ ($k=200$) $\rightarrow 0.9593$ ($k=400$) $\rightarrow 0.9611$ ($k=800$).
      - Unlike unpruned decision trees which experience severe test degradation, gradient boosting with shrinkage ($\eta=0.05$) and stochastic row/feature subsampling resists validation collapse even as training loss approaches zero.
   5. **Computational & Operational Efficiency:**
-     - Comparing summed fit time across identical cross-validation folds, LightGBM is approximately **$1.4\times$ faster** to fit than Random Forest M3 due to 8-bit histogram discretization and leaf-wise splitting.
+     - *[Corrected 2026-10-14 against notebook output: the earlier claim that LightGBM fit about 1.4x faster than Random Forest is not supported by `comparison_cv.csv` (mean fit 7.78 s vs. 7.55 s in this run). In the Phase 17 repeated CV, LightGBM averaged 3.58 s vs. 7.43 s for Random Forest. Timings are machine- and load-dependent.]*
 - **Artifacts Generated:**
   - Fold metrics: `reports/metrics/cv_results_M4_lgbm.csv`
   - OOF predictions & probabilities: `reports/metrics/oof_M4_lgbm.npz`
@@ -369,7 +369,7 @@ This log records our actual development journey, empirical observations, failure
        - **(b) Binary FPR:**
          - Pre-freeze CV favored M4 ($0.030\%$ vs. $0.036\%$). However, after freezing features and evaluating pooled out-of-fold predictions in Entry 14, M3 yielded 17 false alarms while M4 yielded 19 false alarms, indicating tie-break (b) does not persistently favor M4 post-freeze.
        - **(c) Compute Efficiency:**
-         - Summed fit time: M4 is $\approx 1.4\times$ faster to fit across folds than M3.
+         - Fit time: *[Corrected 2026-10-14 against notebook output: not faster in this run (M4 7.78 s vs. M3 7.55 s mean per fold); faster in Phase 17 (3.58 s vs. 7.43 s).]*
   4. **Provisional Deployment Leader:**
      - **`M4_lgbm` (LightGBM)** is designated the **provisional leader** on pre-freeze baselines. Because the margins are narrow (1 U2R row, 10 R2L rows), post-freeze false alarms slightly favor M3 (17 vs. 19), and hyperparameter tuning remains to be completed, the final architecture selection will be rerun on frozen, tuned models in Phase 17 using 5×3 repeated cross-validation before any irrevocable deployment commitment.
 - **Artifacts Generated:**
@@ -618,7 +618,7 @@ This log records our actual development journey, empirical observations, failure
     - Selected $\tau^* = \mathbf{0.002002}$ (frozen as `ALERT_TAU` in `src/config.py`).
     - At $\tau = 0.002002$:
       - $\text{FPR} = \mathbf{0.0911\%}$ (strictly $\le 0.1\%$, corresponding to only **$91.1$ false alarms per 100,000 Normal connections**).
-      - $\text{FNR} = \mathbf{0.0195\%}$ ($0.000195$, only 9 missed attacks out of 46,204 total attacks in train OOF).
+      - $\text{FNR} = \mathbf{0.0195\%}$ ($0.000195$, only 9 missed attacks out of 46,202 total attacks in train OOF *[Corrected 2026-10-14 against notebook output: earlier text said 46,204; 43,657 + 1,704 + 799 + 42 = 46,202.]*).
       - **Macro-F1:** $0.9477$.
       - **R2L Recall:** $\mathbf{98.87\%}$ ($790 / 799$ detected; only 9 misses vs. 14 misses at $\tau=0.5$).
       - **U2R Recall:** $\mathbf{90.48\%}$ ($38 / 42$ detected; misses cut from 7 at $\tau=0.5$ down to 4, or from 8 misses under plain argmax).

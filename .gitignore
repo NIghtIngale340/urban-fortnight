@@ -29,3 +29,9 @@ Thumbs.db
 # Local Prompts and Scratch
 docs/context_prompt.md
 
+# Local Course Reports & Planning Documents
+Document.md
+new.md
+Project_Specs.md
+*.docx
+submission/
